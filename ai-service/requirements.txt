@@ -1,0 +1,11 @@
+qdrant-client
+sentence-transformers
+langchain
+langchain-community
+ollama
+pypdf
+pymysql
+fastapi
+uvicorn
+python-dotenv
+openai
