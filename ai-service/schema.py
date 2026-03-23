@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 load_dotenv()
 import pymysql
-from config import DB_CONFIG
+from config import get_db_config
 import os
 
 def get_schema():

@@ -16,4 +16,12 @@ def ask_ai(prompt, system="You are a helpful AI assistant."):
         temperature=0
     )
 
-    return response.choices[0].message.content
+    content = response.choices[0].message.content.strip()
+
+    # 🔥 CLEAN RESPONSE
+    content = content.replace("```sql", "").replace("```", "").strip()
+
+    if content.lower().startswith("sql"):
+        content = content[3:].strip()
+
+    return content

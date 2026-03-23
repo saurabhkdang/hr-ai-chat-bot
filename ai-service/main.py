@@ -4,6 +4,7 @@ from sql_agent import generate_sql
 from sql_tool import run_sql
 from vector_search import search_docs
 from rag_answer import generate_answer
+from ai_client import ask_ai 
 
 app = FastAPI()
 
@@ -17,18 +18,32 @@ def ask(data: dict):
     if route == "sql":
 
         sql = generate_sql(question)
-        
-        # Remove markdown ```sql ``` blocks
-        if sql.startswith("```"):
-            sql = sql.replace("```sql", "").replace("```", "").strip()
-
-        # Remove leading "sql"
-        if sql.lower().startswith("sql"):
-            sql = sql[3:].strip()
-
-        print(sql)
+        print("Generated SQL:", sql)
 
         db_result = run_sql(sql)
+
+        if "error" in db_result:
+            print("SQL Error:", db_result["error"])
+
+            fix_prompt = f"""
+The following SQL query failed.
+
+Query:
+{db_result['query']}
+
+Error:
+{db_result['error']}
+
+Fix the SQL query. Return ONLY corrected SQL.
+"""
+
+            fixed_sql = ask_ai(fix_prompt)
+
+            print("Fixed SQL:", fixed_sql)
+
+            db_result = run_sql(fixed_sql)
+        
+        
         context = str(db_result)
         print(context)
 

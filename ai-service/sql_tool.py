@@ -1,29 +1,33 @@
-import pymysql
-from config import DB_CONFIG
+from dotenv import load_dotenv
 import os
+import pymysql
+from config import get_db_config
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
 
 def run_sql(query):
 
     if not query.strip().lower().startswith("select"):
         return "Only SELECT queries allowed"
 
-    #conn = pymysql.connect(**DB_CONFIG)
-    connection = pymysql.connect(
-        host=os.getenv("DB_HOST"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-        database=os.getenv("DB_NAME"),
-        port=int(os.getenv("DB_PORT", 3306)),
-        cursorclass=pymysql.cursors.DictCursor
-    )
 
-    cursor = connection.cursor()
-    # cursor = conn.cursor()
-    #query = "select name from api_users_hrdb where id = 124;"
-    print("Executing query:", query)
-    cursor.execute(query)
-    result = cursor.fetchall()
+    try:
+        
+        connection = pymysql.connect(**get_db_config())
+        cursor = connection.cursor()
 
-    connection.close()
+        print("Executing query:", query)
+        cursor.execute(query)
 
-    return result
+        result = cursor.fetchall()
+        connection.close()
+
+        return {"data": result}
+    
+    except Exception as e:
+        return {
+            "error": str(e),
+            "query": query
+        }
