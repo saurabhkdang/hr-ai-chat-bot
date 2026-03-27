@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 import os
 import pymysql
-from config import get_db_config
+from config.schema import get_db_config
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 

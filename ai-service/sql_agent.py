@@ -1,9 +1,9 @@
 import requests
-from config import OLLAMA_URL, MODEL_NAME
+from config.schema import OLLAMA_URL, MODEL_NAME
 from schema import get_schema
-from ai_client import ask_ai
+from utils.llm import ask_ai
 
-def generate_sql(question):
+def generate_sql(question, schema_prompt):
 
     # schema = get_schema()
     # print('below is schema')
@@ -21,20 +21,23 @@ Rules:
     - backticks (```)
     - explanations
     - formatting
+- Date Handling Rules (STRICT):
+    - NEVER use MONTH(), YEAR(), or DATE() functions for filtering
+    - ALWAYS convert month/year into full date range
+    - ALWAYS use BETWEEN for date filtering
 - Output must start directly with SELECT
 - Try to return the columns which are being asked only.
 
 Database schema:
-Table Name : api_users_hrdb
-Field : id, name, email, report_to, dob
-# name: employee's full name
-# email: employee's email address
-# dob: date of birth of employee
+{schema_prompt}
 
 Generate ONLY SQL query.
 
 Question: {question}
 """
+
+# Table Name : api_users_hrdb
+# Field : id, name, email, report_to, dob
 
     return ask_ai(prompt)
 

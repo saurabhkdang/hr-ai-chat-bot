@@ -1,5 +1,5 @@
 import requests
-from config import OLLAMA_URL, MODEL_NAME
+from config.schema import OLLAMA_URL, MODEL_NAME
 from schema import get_schema
 import ollama
 

@@ -1,60 +1,40 @@
-from fastapi import FastAPI
-from router import route_question
-from sql_agent import generate_sql
-from sql_tool import run_sql
-from vector_search import search_docs
-from rag_answer import generate_answer
-from ai_client import ask_ai 
+from fastapi import FastAPI, HTTPException
+# from utility import handle_query
+from services.intent_service import detect_intent
+from services.vector_service import handle_vector_query
+from services.sql_service import handle_sql_query, build_schema_prompt
+from config.schema import ALLOWED_SCHEMA
 
 app = FastAPI()
 
 @app.post("/ask")
 def ask(data: dict):
+    
+    try:
+        user_query = data["question"]
+        # response = handle_query(question)
+        intent = detect_intent(user_query)
 
-    question = data["question"]
+        if intent == "SQL":
+            schema_prompt = build_schema_prompt(ALLOWED_SCHEMA)
+            response = handle_sql_query(user_query, schema_prompt)
 
-    route = route_question(question)
+        elif intent == "VECTOR":
+            response = handle_vector_query(user_query)
 
-    if route == "sql":
+        else:
+            response = {
+                "type": "text",
+                "message": "Sorry, I couldn't understand your query."
+            }
+        return response
 
-        sql = generate_sql(question)
-        print("Generated SQL:", sql)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-        db_result = run_sql(sql)
-
-        if "error" in db_result:
-            print("SQL Error:", db_result["error"])
-
-            fix_prompt = f"""
-The following SQL query failed.
-
-Query:
-{db_result['query']}
-
-Error:
-{db_result['error']}
-
-Fix the SQL query. Return ONLY corrected SQL.
-"""
-
-            fixed_sql = ask_ai(fix_prompt)
-
-            print("Fixed SQL:", fixed_sql)
-
-            db_result = run_sql(fixed_sql)
-        
-        
-        context = str(db_result)
-        print(context)
-
-    else:
-
-        chunks = search_docs(question)
-        context = "\n".join(chunks)
-
-    answer = generate_answer(question, context)
-
-    return {
-        "route": route,
-        "answer": answer
-    }
+# =============================
+# HEALTH CHECK
+# =============================
+@app.get("/")
+def health():
+    return {"status": "HR AI Chatbot running 🚀"}

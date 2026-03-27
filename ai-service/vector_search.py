@@ -1,6 +1,6 @@
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
-from config import COLLECTION_NAME, QDRANT_HOST, QDRANT_PORT
+from config.schema import COLLECTION_NAME, QDRANT_HOST, QDRANT_PORT
 
 model = SentenceTransformer("all-MiniLM-L6-v2")
 client = QdrantClient(QDRANT_HOST, port=QDRANT_PORT)
