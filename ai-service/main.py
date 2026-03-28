@@ -1,9 +1,5 @@
 from fastapi import FastAPI, HTTPException
-# from utility import handle_query
-from services.intent_service import detect_intent
-from services.vector_service import handle_vector_query
-from services.sql_service import handle_sql_query, build_schema_prompt
-from config.schema import ALLOWED_SCHEMA
+from services.query import handle_query
 
 app = FastAPI()
 
@@ -12,21 +8,14 @@ def ask(data: dict):
     
     try:
         user_query = data["question"]
-        # response = handle_query(question)
-        intent = detect_intent(user_query)
 
-        if intent == "SQL":
-            schema_prompt = build_schema_prompt(ALLOWED_SCHEMA)
-            response = handle_sql_query(user_query, schema_prompt)
-
-        elif intent == "VECTOR":
-            response = handle_vector_query(user_query)
-
-        else:
-            response = {
+        if not user_query.strip():
+            return {
                 "type": "text",
-                "message": "Sorry, I couldn't understand your query."
+                "message": "Please enter a query"
             }
+        
+        response = handle_query(user_query)
         return response
 
     except Exception as e:

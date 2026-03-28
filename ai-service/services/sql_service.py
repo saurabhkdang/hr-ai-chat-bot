@@ -1,6 +1,7 @@
 from sql_agent import generate_sql
 from sql_tool import run_sql
 from utils.llm import ask_ai
+from datetime import datetime, timedelta
 import re
 
 ALLOWED_OPERATIONS = ["SELECT"]
@@ -8,6 +9,32 @@ BLOCKED_KEYWORDS = [
     "DELETE", "UPDATE", "INSERT", "DROP", "ALTER",
     "TRUNCATE", "EXEC", "UNION"
 ]
+
+def extract_date_range(query: str):
+    query = query.lower()
+    today = datetime.today()
+
+    # last N days
+    match = re.search(r"last (\d+) days", query)
+    if match:
+        days = int(match.group(1))
+        start = (today - timedelta(days=days)).strftime('%Y-%m-%d')
+        end = today.strftime('%Y-%m-%d')
+        return start, end
+
+    # last N months
+    match = re.search(r"last (\d+) months", query)
+    if match:
+        months = int(match.group(1))
+        start = (today - timedelta(days=30*months)).strftime('%Y-%m-%d')
+        end = today.strftime('%Y-%m-%d')
+        return start, end
+
+    # till today
+    if "till today" in query or "until today" in query:
+        return None, today.strftime('%Y-%m-%d')
+
+    return None, None
 
 def retry_with_error(user_query, sql_query, error_msg, schema_prompt):
     prompt = f"""
@@ -36,12 +63,23 @@ def retry_with_error(user_query, sql_query, error_msg, schema_prompt):
         - NEVER use MONTH(), YEAR(), or DATE() functions for filtering
         - ALWAYS convert month/year into full date range
         - ALWAYS use BETWEEN for date filtering
+    - Always apply date filters if mentioned:
+        - "today" → current date
+        - "last N days" → BETWEEN dates
+    - If "till today" → use <= current_date
     - Add LIMIT 10
     - Do not explain anything
 
     Return only corrected SQL.
     """
-    return ask_ai(prompt)
+    conent = ask_ai(prompt)
+    # 🔥 CLEAN RESPONSE
+    content = content.replace("```sql", "").replace("```", "").strip()
+
+    if content.lower().startswith("sql"):
+        content = content[3:].strip()
+
+    return content
 
 def build_schema_prompt(schema):
     lines = []
@@ -60,8 +98,33 @@ def build_schema_prompt(schema):
 
     return "\n".join(lines)
 
+def is_valid_sql_query(user_query):
+    user_query = user_query.lower()
+
+    keywords = ["show", "list", "get", "find", "balance", "report", "dob"]
+
+    return any(k in user_query for k in keywords)
+
 def handle_sql_query(user_query, SCHEMA_PROMPT):
     try:
+        if not user_query.strip():
+            return {
+                "type": "text",
+                "message": "Please enter a query"
+            }
+
+        if not is_valid_sql_query(user_query):
+            print("SQL BLOCKED:", user_query)
+            return {
+                "type": "text",
+                "message": "Please provide more specific query"
+            }
+
+        start_date, end_date = extract_date_range(user_query)
+
+        if start_date or end_date:
+            user_query += f" | DATE_FILTER: {start_date} to {end_date}"        
+
         # Step 1: Generate SQL
         sql_query = generate_sql(user_query, SCHEMA_PROMPT)
 
@@ -182,11 +245,15 @@ def format_response(rows, user_query):
         }
 
     else:
+        columns = [prettify_column(c) for c in rows[0].keys()]
         return {
             "type": "table",
-            "columns": list(rows[0].keys()),
+            "columns": list(columns),
             "rows": [list(row.values()) for row in rows]
         }
+
+def prettify_column(col):
+    return col.replace("_", " ").title()
 
 def build_final_response(rows, user_query):
     base = format_response(rows, user_query)

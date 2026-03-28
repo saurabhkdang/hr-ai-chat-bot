@@ -18,10 +18,7 @@ def ask_ai(prompt, system="You are a helpful AI assistant."):
 
     content = response.choices[0].message.content.strip()
 
-    # 🔥 CLEAN RESPONSE
-    content = content.replace("```sql", "").replace("```", "").strip()
-
-    if content.lower().startswith("sql"):
-        content = content[3:].strip()
+    # print("FULL RESPONSE:", response)
+    # print("CHOICES:", response.choices)
 
     return content

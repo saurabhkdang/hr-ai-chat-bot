@@ -32,7 +32,9 @@ ALLOWED_SCHEMA = {
             "email": "Employee email address",
             "report_to": "Manager ID (reports to)",
             "jd_id": "Job description ID",
-            "dob" : "date of birth"
+            "dob" : "date of birth",
+            "status" : "if 1 employee is active else not",
+            "leave_reason" : "if not blank, then employee is left"
         }
     },
 
@@ -71,9 +73,9 @@ ALLOWED_SCHEMA = {
             "user_id": "Employee ID",
             "month_year": "Month and year of record",
 
-            "closing_sl": "Sick Leave balance (SL = Sick Leave)",
-            "closing_cl": "Casual Leave balance (CL = Casual Leave)",
-            "closing_pl": "Privileged Leave balance (PL = Privileged Leave)",
+            "closing_sl": "Sick Leave balance (SL = Sick Leave) and sl balance till date",
+            "closing_cl": "Casual Leave balance (CL = Casual Leave)  and cl balance till date",
+            "closing_pl": "Privileged Leave balance (PL = Privileged Leave)  and pl balance till date",
 
             "availed_sl": "Sick Leave taken",
             "availed_cl": "Casual Leave taken",

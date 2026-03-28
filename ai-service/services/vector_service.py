@@ -3,6 +3,11 @@ from utils.llm import ask_ai
 
 def handle_vector_query(user_query):
     try:
+        if not user_query.strip():
+            return {
+                "type": "text",
+                "message": "Please enter a query"
+            }
         # Step 1: Search from vector DB (FAISS / Pinecone etc.)
         docs = search_docs(user_query)  # returns top matches
 
