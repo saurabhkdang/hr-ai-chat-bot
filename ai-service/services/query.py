@@ -1,25 +1,27 @@
-from services.intent_service import detect_intent
+from utils.intent_service import detect_intent
 from services.vector_service import handle_vector_query
 from services.sql_service import handle_sql_query, build_schema_prompt
 from services.hybrid import is_hybrid_query, handle_hybrid_query
+from utils.parser import parse_query
 from config.schema import ALLOWED_SCHEMA
 
 def handle_query(user_query):
-    if is_hybrid_query(user_query):
-        return handle_hybrid_query(user_query)
+    parsed = parse_query(user_query)
 
-    intent = detect_intent(user_query)
-    print(intent)
-    if intent == "SQL":
+    # if is_hybrid_query(parsed):
+        # return handle_hybrid_query(parsed)
+
+    intent = detect_intent(parsed)
+    print("INTENT : ", intent)
+    if intent == "HYBRID":
+        return handle_hybrid_query(parsed)
+    elif intent == "SQL":
         schema_prompt = build_schema_prompt(ALLOWED_SCHEMA)
-        response = handle_sql_query(user_query, schema_prompt)
-
+        return handle_sql_query(parsed, schema_prompt)
     elif intent == "VECTOR":
-        response = handle_vector_query(user_query)
+        return handle_vector_query(parsed["raw"])
 
-    else:
-        response = {
-            "type": "text",
-            "message": "Sorry, I couldn't understand your query."
-        }
-    return response
+    return {
+        "type": "text",
+        "message": "Sorry, I couldn't understand your query."
+    }

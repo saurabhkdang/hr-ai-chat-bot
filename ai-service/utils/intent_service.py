@@ -20,18 +20,30 @@ def detect_intent(query):
     return intent 
 
 def detect_intent_rule_based(query):
-    q = query.lower()
+    q = query["raw"].lower()
 
-    if any(word in q for word in ["leave balance", "sick leave", "casual leave"]):
+    has_data = any(word in q for word in [
+        "attendance", "leave", "balance", "report", "salary"
+    ])
+
+    has_explain = any(word in q for word in [
+        "policy", "rule", "process", "how"
+    ])
+
+    # 🔥 HYBRID CHECK FIRST
+    if has_data and has_explain:
+        return "HYBRID"
+
+    if has_data:
         return "SQL"
 
-    if any(word in q for word in ["policy", "rule", "process", "how"]):
+    if has_explain:
         return "VECTOR"
 
     return None
 
 def detect_intent_pattern(query):
-    q = query.lower()
+    q = query["raw"].lower()
 
     if re.search(r"(how many|balance|remaining).*(leave)", q):
         return "SQL"
@@ -60,7 +72,7 @@ def detect_intent_llm(query):
     Do NOT explain.
 
     Query:
-    {query}
+    {query["raw"].lower()}
     """
     # - If unclear or generic (e.g. "leave", "details") → VECTOR (DO NOT use SQL)
     res = ask_ai(prompt)

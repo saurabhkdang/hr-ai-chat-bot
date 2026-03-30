@@ -3,6 +3,8 @@ from utils.llm import ask_ai
 
 def handle_vector_query(user_query):
     try:
+        print(user_query)
+        
         if not user_query.strip():
             return {
                 "type": "text",

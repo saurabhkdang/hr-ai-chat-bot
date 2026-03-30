@@ -1,6 +1,7 @@
 from sql_agent import generate_sql
 from sql_tool import run_sql
 from utils.llm import ask_ai
+from utils.formatter import format_response
 from datetime import datetime, timedelta
 import re
 
@@ -103,30 +104,38 @@ def is_valid_sql_query(user_query):
 
     keywords = ["show", "list", "get", "find", "balance", "report", "dob"]
 
-    return any(k in user_query for k in keywords)
+    return any(k in user_query.lower() for k in keywords)
 
 def handle_sql_query(user_query, SCHEMA_PROMPT):
     try:
-        if not user_query.strip():
+        if not user_query["raw"].strip():
             return {
                 "type": "text",
                 "message": "Please enter a query"
             }
 
-        if not is_valid_sql_query(user_query):
-            print("SQL BLOCKED:", user_query)
+        if not is_valid_sql_query(user_query["raw"]):
+            print("SQL BLOCKED:", user_query["raw"])
             return {
                 "type": "text",
                 "message": "Please provide more specific query"
             }
 
-        start_date, end_date = extract_date_range(user_query)
+        query = user_query["raw"]
+        if user_query["name"]:
+            query += f" | NAME: {user_query['name']}"
+
+        if user_query["date_range"]:
+            query += f" | DATE_RANGE: {user_query['date_range']}"
+
+
+        start_date, end_date = extract_date_range(query)
 
         if start_date or end_date:
-            user_query += f" | DATE_FILTER: {start_date} to {end_date}"        
+            query += f" | DATE_FILTER: {start_date} to {end_date}"        
 
         # Step 1: Generate SQL
-        sql_query = generate_sql(user_query, SCHEMA_PROMPT)
+        sql_query = generate_sql(query, SCHEMA_PROMPT)
 
         # Step 2: Enforce LIMIT
         sql_query = enforce_limit(sql_query)
@@ -140,13 +149,13 @@ def handle_sql_query(user_query, SCHEMA_PROMPT):
             }
 
         # Step 4: Execute with retry
-        result = execute_with_retry(user_query, sql_query, SCHEMA_PROMPT)
+        result = execute_with_retry(user_query["raw"], sql_query, SCHEMA_PROMPT)
 
         # Step 5: Normalize
         rows = normalize_rows(result)
 
         # Step 6: Format response
-        return build_final_response(rows, user_query)
+        return build_final_response(rows, user_query["raw"])
 
     except Exception as e:
         return {
@@ -216,44 +225,6 @@ def normalize_rows(result):
         return result
     else:
         return []
-
-def detect_response_type(rows):
-    if not rows:
-        return "empty"
-
-    if len(rows) == 1 and len(rows[0]) == 1:
-        return "single_value"
-
-    return "table"
-
-def format_response(rows, user_query):
-    response_type = detect_response_type(rows)
-
-    if response_type == "empty":
-        return {
-            "type": "text",
-            "message": "No data found."
-        }
-
-    elif response_type == "single_value":
-        key = list(rows[0].keys())[0]
-        value = rows[0][key]
-
-        return {
-            "type": "text",
-            "message": f"{key.replace('_', ' ').title()}: {value}"
-        }
-
-    else:
-        columns = [prettify_column(c) for c in rows[0].keys()]
-        return {
-            "type": "table",
-            "columns": list(columns),
-            "rows": [list(row.values()) for row in rows]
-        }
-
-def prettify_column(col):
-    return col.replace("_", " ").title()
 
 def build_final_response(rows, user_query):
     base = format_response(rows, user_query)

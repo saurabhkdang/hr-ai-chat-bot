@@ -1,40 +1,100 @@
 from services.sql_service import handle_sql_query, build_schema_prompt
 from services.vector_service import handle_vector_query
+from utils.parser import parse_query
 from config.schema import ALLOWED_SCHEMA
+from utils.llm import ask_ai
+import re
 
-def is_hybrid_query(query):
-    q = query.lower()
+def is_hybrid_query(parsed_query):
+    query = parsed_query["raw"].lower()
 
-    sql_keywords = ["leave", "salary", "attendance", "employee"]
-    vector_keywords = ["policy", "rule", "process", "how"]
+    has_data = any(k in query for k in [
+        "attendance", "leave", "balance", "report", "salary"
+    ])
 
-    has_sql = any(k in q for k in sql_keywords)
-    has_vector = any(k in q for k in vector_keywords)
+    has_explain = any(k in query for k in [
+        "policy", "rules", "how", "why"
+    ])
 
-    return has_sql and has_vector
+    return has_data and has_explain
 
-def handle_hybrid_query(user_query):
+def extract_vector_query_llm(query):
+    prompt = f"""
+    You are an assistant that extracts only the explanation or policy-related part of a query.
+
+    Rules:
+    - Keep only parts related to: policy, rules, explanation, how, why
+    - Remove employee names, dates, and data queries
+    - If no explanation part exists, return empty string
+
+    Query:
+    "{query}"
+
+    Return ONLY the extracted text. No extra words.
+    """
+
+    response = ask_ai(prompt)  # your existing LLM function
+
+    return response.strip()
+
+def handle_hybrid_query(parsed_query):
+    try:
+        # 1. SQL processing (structured data)
+        schema_prompt = build_schema_prompt(ALLOWED_SCHEMA)
+        sql_result = handle_sql_query(parsed_query, schema_prompt)
+
+        # 2. Vector processing (explanation)
+        # 2. Vector (LLM cleaned query)
+        vector_query = extract_vector_query_llm(parsed_query["raw"])
+        print("Vector Query : ", vector_query)
+        if not vector_query:
+            vector_query = parsed_query["raw"]
+
+        vector_result = handle_vector_query(vector_query)
+        print("VECTOR RESULT : ", vector_result)
+        # 3. Merge
+        return merge_hybrid_response(
+            sql_result,
+            vector_result,
+            parsed_query["raw"]
+        )
+    except Exception as e:
+        return {
+            "type": "text",
+            "message": f"Hybrid Error: {str(e)}"
+        }
+
+def handle_hybrid_query_old(user_query):
     try:
         # 1. Split query
-        sql_part, vector_part = split_hybrid_query(user_query)
+        sql_part, vector_part = split_hybrid_query(user_query["raw"])
+        
+        print("PART : ", sql_part, vector_part)
 
+        sql_parsed = parse_query(sql_part)
+        vector_parsed = parse_query(vector_part)
+        
+        # print("HYBRID : ", user_query, sql_part, vector_part)
         # 2. Process SQL
         schema_prompt = build_schema_prompt(ALLOWED_SCHEMA)
-        sql_result = handle_sql_query(sql_part, schema_prompt)
+        sql_result = handle_sql_query(sql_parsed, schema_prompt)
 
         # 3. Process Vector
         vector_result = None
         if vector_part:
-            vector_result = handle_vector_query(vector_part)
+            vector_result = handle_vector_query(vector_parsed)
 
         # 4. Merge results
-        return merge_hybrid_response(sql_result, vector_result, user_query)
+        return merge_hybrid_response(sql_result, vector_result, user_query["raw"])
 
     except Exception as e:
         return {
             "type": "text",
             "message": f"Hybrid Error: {str(e)}"
         }
+
+def contains_keyword(text, keywords):
+    return any(re.search(rf"\b{k}\b", text) for k in keywords)
 
 def split_hybrid_query(query):
     query = query.lower()
@@ -44,9 +104,9 @@ def split_hybrid_query(query):
 
         sql_part = ""
         vector_part = ""
-
+        
         for p in parts:
-            if any(k in p for k in ["policy", "rules", "how", "why"]):
+            if contains_keyword(p, ["policy", "rules", "how", "why"]):
                 vector_part += p + " "
             else:
                 sql_part += p + " "
