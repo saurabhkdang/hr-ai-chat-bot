@@ -34,10 +34,9 @@ ALLOWED_SCHEMA = {
             "jd_id": "Job description ID",
             "dob" : "date of birth",
             "status" : "if 1 employee is active else not",
-            "leave_reason" : "if not blank, then employee is left"
         }
     },
-
+    #"leave_reason" : "if not blank, then employee is left"
     "api_job_description": {
         "description": "Job roles and titles",
         "columns": {

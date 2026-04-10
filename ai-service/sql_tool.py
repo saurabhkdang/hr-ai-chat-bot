@@ -7,7 +7,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
 
-def run_sql(query):
+def run_sql(query, params=None):
 
     if not query.strip().lower().startswith("select"):
         return "Only SELECT queries allowed"
@@ -19,7 +19,7 @@ def run_sql(query):
         cursor = connection.cursor()
 
         print("Executing query:", query)
-        cursor.execute(query)
+        cursor.execute(query, params or [])
 
         result = cursor.fetchall()
         connection.close()

@@ -2,6 +2,7 @@ import requests
 from config.schema import OLLAMA_URL, MODEL_NAME
 import ollama
 from ai_client import ask_ai
+from utils.llm_service import call_llm
 
 def generate_answer(question, context):
 
@@ -14,7 +15,7 @@ Context:
 Question:
 {question}
 """
-    return ask_ai(prompt)
+    return call_llm(prompt)
     
     """ res = requests.post(OLLAMA_URL, json={
         "model": MODEL_NAME,

@@ -1,9 +1,11 @@
-from sql_agent import generate_sql
+from sql_agent import generate_sql_strict
 from sql_tool import run_sql
 from utils.llm import ask_ai
 from utils.formatter import format_response
 from datetime import datetime, timedelta
 import re
+from utils.llm_service import call_llm
+from utils.entity_extractor import extract_employee_names
 
 ALLOWED_OPERATIONS = ["SELECT"]
 BLOCKED_KEYWORDS = [
@@ -60,6 +62,10 @@ def retry_with_error(user_query, sql_query, error_msg, schema_prompt):
     Rules:
     - Only SELECT queries
     - Use correct column names from schema
+    - ALWAYS use table aliases (u, a, etc.)
+    - ALWAYS prefix column names with table alias
+    - NEVER use ambiguous column names
+    - If multiple tables have same column, choose correct table based on context
     - Date Handling Rules (STRICT):
         - NEVER use MONTH(), YEAR(), or DATE() functions for filtering
         - ALWAYS convert month/year into full date range
@@ -73,12 +79,12 @@ def retry_with_error(user_query, sql_query, error_msg, schema_prompt):
 
     Return only corrected SQL.
     """
-    conent = ask_ai(prompt)
+    conent = call_llm(prompt)
     # 🔥 CLEAN RESPONSE
-    content = content.replace("```sql", "").replace("```", "").strip()
+    # content = content.replace("```sql", "").replace("```", "").strip()
 
-    if content.lower().startswith("sql"):
-        content = content[3:].strip()
+    # if content.lower().startswith("sql"):
+    #     content = content[3:].strip()
 
     return content
 
@@ -99,12 +105,36 @@ def build_schema_prompt(schema):
 
     return "\n".join(lines)
 
+def is_lookup_query(q):
+    return (
+        len(q.split()) <= 6 and
+        any(word in q for word in ["of", "for"])
+    )
+
 def is_valid_sql_query(user_query):
     user_query = user_query.lower()
 
-    keywords = ["show", "list", "get", "find", "balance", "report", "dob"]
+    strong_sql = ["balance", "report", "attendance", "salary"]
+    weak_sql = ["leave", "details"]
 
-    return any(k in user_query.lower() for k in keywords)
+    # 🔥 NEW: field keywords
+    field_keywords = [
+        "dob", "date of birth",
+        "email", "phone", "mobile",
+        "address", "salary"
+    ]
+
+    # 🔥 NEW: entity pattern
+    if any(f in user_query for f in field_keywords) and is_lookup_query(user_query):
+        return True
+
+    if any(k in user_query for k in strong_sql):
+        return True
+
+    if any(k in user_query for k in weak_sql):
+        return False
+
+    return any(k in user_query for k in ["show", "list", "get"])
 
 def handle_sql_query(user_query, SCHEMA_PROMPT):
     try:
@@ -122,8 +152,18 @@ def handle_sql_query(user_query, SCHEMA_PROMPT):
             }
 
         query = user_query["raw"]
+
+        names = extract_employee_names(query)
+
+        if not names:
+            return {
+                "type": "text",
+                "message": "Please specify employee name."
+            }
+
+
         if user_query["name"]:
-            query += f" | NAME: {user_query['name']}"
+            query += f" for employee {user_query['name']}"
 
         if user_query["date_range"]:
             query += f" | DATE_RANGE: {user_query['date_range']}"
@@ -135,7 +175,7 @@ def handle_sql_query(user_query, SCHEMA_PROMPT):
             query += f" | DATE_FILTER: {start_date} to {end_date}"        
 
         # Step 1: Generate SQL
-        sql_query = generate_sql(query, SCHEMA_PROMPT)
+        sql_query = generate_sql_strict(query, SCHEMA_PROMPT)
 
         # Step 2: Enforce LIMIT
         sql_query = enforce_limit(sql_query)
@@ -143,20 +183,39 @@ def handle_sql_query(user_query, SCHEMA_PROMPT):
         # Step 3: Validate
         is_valid, msg = validate_sql(sql_query)
         if not is_valid:
-            return {
-                "type": "text",
-                "message": f"Invalid query: {msg}"
-            }
+            print("[SQL INVALID BEFORE EXEC]", msg)
+
+            sql_query = retry_with_error(
+                user_query["raw"],
+                sql_query,
+                msg,
+                SCHEMA_PROMPT
+            )
+
+            sql_query = enforce_limit(sql_query)
+
+            is_valid, msg = validate_sql(sql_query)
+
+            if not is_valid:
+                return {
+                    "type": "text",
+                    "message": "Unable to generate valid query. Please rephrase."
+                }
 
         # Step 4: Execute with retry
         result = execute_with_retry(user_query["raw"], sql_query, SCHEMA_PROMPT)
-
+        print("SQL Result:", result)
         # Step 5: Normalize
         rows = normalize_rows(result)
-
+        print("Normalize Rows: ", rows)
         # Step 6: Format response
         return build_final_response(rows, user_query["raw"])
 
+    except ValueError as e:
+        return {
+            "type": "text",
+            "message": str(e)
+        }
     except Exception as e:
         return {
             "type": "text",
@@ -174,24 +233,28 @@ def enforce_limit(query: str, limit=10):
 def validate_sql(query: str) -> (bool, str):
     q = query.upper().strip()
 
-    # Must start with SELECT
+    # must start with SELECT
     if not q.startswith("SELECT"):
-        return False, "Only SELECT queries are allowed."
+        return False, "Only SELECT queries allowed"
 
-    # Block dangerous keywords
+    # block dangerous keywords
     for keyword in BLOCKED_KEYWORDS:
         if re.search(rf"\b{keyword}\b", q):
-            return False, f"Blocked keyword detected: {keyword}"
+            return False, f"Blocked keyword: {keyword}"
 
-    # Prevent multiple statements
-    if ";" in q and not q.endswith(";"):
-        return False, "Multiple SQL statements are not allowed."
+    # prevent multiple statements
+    if ";" in q[:-1]:
+        return False, "Multiple statements not allowed"
 
-    # Enforce LIMIT
+    # prevent SELECT *
+    if "SELECT *" in q:
+        return False, "SELECT * not allowed"
+
+    # must have LIMIT
     if "LIMIT" not in q:
-        return False, "Query must include LIMIT."
+        return False, "LIMIT missing"
 
-    return True, "Valid query"
+    return True, "Valid"
 
 def execute_with_retry(user_query, sql_query, schema_prompt, max_retries=2):
     attempt = 0
@@ -248,4 +311,4 @@ def generate_summary(rows, user_query):
 
     Keep it short and clear.
     """
-    return ask_ai(prompt)
+    return call_llm(prompt)

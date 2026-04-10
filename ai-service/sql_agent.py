@@ -2,6 +2,149 @@ import requests
 from config.schema import OLLAMA_URL, MODEL_NAME
 from schema import get_schema
 from utils.llm import ask_ai
+from utils.llm_service import call_llm
+from utils.entity_extractor import extract_employee_names
+from config.schema import get_db_config
+from sql_tool import run_sql
+import re
+# from dotenv import load_dotenv
+# import os
+# import pymysql
+
+# BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
+
+def enforce_name_filter(query):
+    names = extract_employee_names(query)
+
+    print("Extracted names for filtering:", names)
+
+    if not names:
+        return None, "Please specify employee name."
+
+    user_ids = []
+
+    for name in names:
+        # 🔥 Clean again (double safety)
+        name = name.lower().strip()
+        name = re.sub(r'\s+', ' ', name)
+
+        sql = """
+            SELECT id, name
+            FROM api_users_hrdb
+            WHERE LOWER(name) LIKE %s
+        """
+
+        param = f"%{name}%"
+
+        print(f"Running SQL for name: {name}")
+
+        result = run_sql(sql, [param])
+
+        print("Users found:", result)
+
+        if result and result.get("data"):
+            for u in result["data"]:
+                user_ids.append(str(u["id"]))
+
+    if not user_ids:
+        return None, "No employee found."
+
+    # 🔥 Remove duplicates
+    user_ids = list(set(user_ids))
+
+    print("Final user_ids:", user_ids)
+
+    return user_ids, None
+
+def inject_user_filter(sql, user_ids):
+    condition = f"u.id IN ({','.join(user_ids)})"
+
+    # Normalize
+    sql = sql.strip().rstrip(";")
+
+    # Regex to find ORDER BY or LIMIT
+    match = re.search(r"\b(order\s+by|limit)\b", sql, re.IGNORECASE)
+
+    if match:
+        split_index = match.start()
+        before = sql[:split_index].strip()
+        after = sql[split_index:].strip()
+    else:
+        before = sql
+        after = ""
+
+    # Inject condition into WHERE
+    if "where" in before.lower():
+        before += f" AND {condition}"
+    else:
+        before += f" WHERE {condition}"
+
+    # Rebuild query
+    final_sql = f"{before} {after}".strip()
+
+    return final_sql
+
+def generate_sql_strict(user_query, schema_prompt):
+    prompt = f"""
+    You are an expert SQL generator.
+
+    STRICT RULES:
+    - Only generate MySQL SELECT queries
+    - NEVER use SELECT *
+    - Use ONLY columns from schema
+    - ALWAYS use table aliases (u, a, etc.)
+    - ALWAYS prefix column names with table alias
+    - NEVER use ambiguous column names
+    - If multiple tables have same column, choose correct table based on context
+    - ALWAYS include WHERE if name/date present
+    - If only month and year are given:
+        → Use date range (BETWEEN or >= and <)
+    - Do NOT assume a single day
+    - Always include full date format YYYY-MM-DD
+    - NEVER hallucinate columns
+    - DO NOT explain anything
+
+    Schema:
+    {schema_prompt}
+
+    User Query:
+    {user_query}
+
+    Return ONLY SQL.
+    """
+    # - Add LIMIT 10
+    response = call_llm(prompt)
+
+    # clean response
+    response = response.replace("```sql", "").replace("```", "").strip()
+
+    if response.lower().startswith("sql"):
+        response = response[3:].strip()
+
+    # 🧹 Clean response (VERY IMPORTANT)
+    if "```" in response:
+        response = response.split("```")[-2]
+
+    print("Generated SQL:", response)
+    
+    # db = pymysql.connect(**get_db_config())
+    # cursor = db.cursor()
+    user_ids, error = enforce_name_filter(user_query)
+    print("User IDs for filtering:", user_ids, "Error:", error)
+    # db.close()
+
+    response = response.strip().rstrip(";")
+
+    if error:
+        raise ValueError(error)
+
+    # Inject into SQL
+    response = inject_user_filter(response, user_ids)
+
+
+    return response
 
 def generate_sql(question, schema_prompt):
 
@@ -39,7 +182,7 @@ Question: {question}
 # Table Name : api_users_hrdb
 # Field : id, name, email, report_to, dob
 
-    return ask_ai(prompt)
+    return call_llm(prompt)
 
     """ res = requests.post(OLLAMA_URL, json={
         "model": MODEL_NAME,

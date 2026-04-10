@@ -4,7 +4,7 @@ def test_queries():
     test_cases = [
         # SQL
         "saurabh dang leave balance as on march 2026",
-        "show last 7 attendance for mukesh kumar sharma",
+        "show last 7 days attendance for mukesh kumar sharma",
         "dob of larry white",
         "list all active employees",
 

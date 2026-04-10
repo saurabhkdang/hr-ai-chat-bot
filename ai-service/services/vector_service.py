@@ -1,5 +1,6 @@
 from vector_search import search_docs
 from utils.llm import ask_ai
+from utils.llm_service import call_llm
 
 def handle_vector_query(user_query):
     try:
@@ -28,7 +29,7 @@ def handle_vector_query(user_query):
 
         # print("Context for LLM:", context)
         # Step 3: Ask LLM
-        summary = ask_ai(f"""
+        summary = call_llm(f"""
         Answer the question based on the context below.
 
         Question:
