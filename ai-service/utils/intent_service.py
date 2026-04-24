@@ -86,7 +86,7 @@ def detect_intent(query):
         "dob", "date of birth",
         "email", "phone",
         "address",
-        "joining date", "doj"
+        "joining date", "doj", "leaves taken"
     ]
 
     medium_sql = [
@@ -97,9 +97,13 @@ def detect_intent(query):
         "leave", "details"
     ]
 
+    STRONG_SQL_SIGNALS = [
+        "taken", "balance", "report", "status", "list"
+    ]
+
     # ---------------- VECTOR SIGNALS ----------------
     strong_vector = [
-        "policy", "rule", "rules", "process"
+        "policy", "rule", "rules", "process", "wfh", "work from home"
     ]
 
     medium_vector = [
@@ -111,6 +115,10 @@ def detect_intent(query):
     for word in strong_sql:
         if word in q:
             sql_score += 3
+    
+    for word in STRONG_SQL_SIGNALS:
+        if word in query:
+            sql_score += 2  # 🔥 boost
 
     for word in medium_sql:
         if word in q:

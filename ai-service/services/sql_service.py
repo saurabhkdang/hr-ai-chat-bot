@@ -1,4 +1,4 @@
-from sql_agent import generate_sql_strict
+from sql_agent import generate_sql_strict, enforce_name_filter
 from sql_tool import run_sql
 from utils.llm import ask_ai
 from utils.formatter import format_response
@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 import re
 from utils.llm_service import call_llm
 from utils.entity_extractor import extract_employee_names
+from services.sql_builder import build_sql
+import json
 
 ALLOWED_OPERATIONS = ["SELECT"]
 BLOCKED_KEYWORDS = [
@@ -13,11 +15,18 @@ BLOCKED_KEYWORDS = [
     "TRUNCATE", "EXEC", "UNION"
 ]
 
+import re
+from datetime import datetime, timedelta
+
+import re
+from datetime import datetime, timedelta
+import calendar
+
 def extract_date_range(query: str):
     query = query.lower()
     today = datetime.today()
 
-    # last N days
+    # 🔥 1. last N days
     match = re.search(r"last (\d+) days", query)
     if match:
         days = int(match.group(1))
@@ -25,17 +34,77 @@ def extract_date_range(query: str):
         end = today.strftime('%Y-%m-%d')
         return start, end
 
-    # last N months
+    # 🔥 2. last N months
     match = re.search(r"last (\d+) months", query)
     if match:
         months = int(match.group(1))
-        start = (today - timedelta(days=30*months)).strftime('%Y-%m-%d')
+        start = (today - timedelta(days=30 * months)).strftime('%Y-%m-%d')
         end = today.strftime('%Y-%m-%d')
         return start, end
 
-    # till today
+    # 🔥 3. till today
     if "till today" in query or "until today" in query:
         return None, today.strftime('%Y-%m-%d')
+
+    # 🔥 4. specific date (23rd March 2026)
+    match = re.search(r"on (\d{1,2})(st|nd|rd|th)? (\w+) (\d{4})", query)
+    if match:
+        day = int(match.group(1))
+        month_str = match.group(3)
+        year = int(match.group(4))
+
+        try:
+            date_obj = datetime.strptime(f"{day} {month_str} {year}", "%d %B %Y")
+        except:
+            try:
+                date_obj = datetime.strptime(f"{day} {month_str} {year}", "%d %b %Y")
+            except:
+                return None, None
+
+        date_str = date_obj.strftime('%Y-%m-%d')
+        return date_str, date_str
+
+    # 🔥 5. month + year (feb 2026 / february 2026)
+    match = re.search(r"in (\w+) (\d{4})", query)
+    if match:
+        month_str = match.group(1)
+        year = int(match.group(2))
+
+        try:
+            # full month
+            month = datetime.strptime(month_str, "%B").month
+        except:
+            try:
+                # short month
+                month = datetime.strptime(month_str, "%b").month
+            except:
+                return None, None
+
+        start_date = datetime(year, month, 1)
+        last_day = calendar.monthrange(year, month)[1]
+        end_date = datetime(year, month, last_day)
+
+        return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
+
+    # 🔥 6. only month (assume current year)
+    match = re.search(r"in (\w+)", query)
+    if match:
+        month_str = match.group(1)
+
+        try:
+            month = datetime.strptime(month_str, "%B").month
+        except:
+            try:
+                month = datetime.strptime(month_str, "%b").month
+            except:
+                return None, None
+
+        year = today.year
+        start_date = datetime(year, month, 1)
+        last_day = calendar.monthrange(year, month)[1]
+        end_date = datetime(year, month, last_day)
+
+        return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
 
     return None, None
 
@@ -70,6 +139,10 @@ def retry_with_error(user_query, sql_query, error_msg, schema_prompt):
         - NEVER use MONTH(), YEAR(), or DATE() functions for filtering
         - ALWAYS convert month/year into full date range
         - ALWAYS use BETWEEN for date filtering
+        - NEVER use incomplete dates like '2023-10'
+        - ALWAYS use full date format 'YYYY-MM-DD'
+        - If month is given, use:
+        BETWEEN 'YYYY-MM-01' AND 'YYYY-MM-31'
     - Always apply date filters if mentioned:
         - "today" → current date
         - "last N days" → BETWEEN dates
@@ -114,6 +187,37 @@ def is_lookup_query(q):
 def is_valid_sql_query(user_query):
     user_query = user_query.lower()
 
+    strong_sql = ["balance", "report", "attendance", "salary", "taken"]
+    weak_sql = ["leave", "details"]
+
+    field_keywords = [
+        "dob", "date of birth",
+        "email", "phone", "mobile",
+        "address", "salary"
+    ]
+
+    # ✅ Field-based lookup
+    if any(f in user_query for f in field_keywords) and is_lookup_query(user_query):
+        return True
+
+    # ✅ Strong SQL signals
+    if any(k in user_query for k in strong_sql):
+        return True
+
+    # ✅ Weak SQL but with context
+    if any(k in user_query for k in weak_sql):
+        if extract_employee_names(user_query) or extract_date_range(user_query) != (None, None):
+            return True
+
+    # ✅ Generic SQL actions
+    if any(k in user_query for k in ["show", "list", "get"]):
+        return True
+
+    return False
+
+def is_valid_sql_query11(user_query):
+    user_query = user_query.lower()
+
     strong_sql = ["balance", "report", "attendance", "salary"]
     weak_sql = ["leave", "details"]
 
@@ -136,6 +240,75 @@ def is_valid_sql_query(user_query):
 
     return any(k in user_query for k in ["show", "list", "get"])
 
+def detect_metric(query):
+    q = query.lower()
+    print("Q : ",q)
+    # 🔥 Employee list (HIGH PRIORITY)
+    if "employee" in q or "employees" in q:
+        return "employee_list"
+
+    # 🔥 Attendance
+    if "attendance" in q:
+        return "attendance"
+
+    # 🔥 Leave
+    if "leave" in q:
+        return "leave_balance"
+
+    # 🔥 DOB
+    if "dob" in q or "date of birth" in q:
+        return "dob"
+
+    # ❌ REMOVE bad default
+    return None
+
+def extract_structured_intent(query):
+    prompt = f"""
+    Extract structured intent from the query.
+
+    Return JSON only.
+
+    Supported intents:
+    - attendance
+    - leave_balance
+    - employee_list
+    - employee_info
+    - applied_leaves
+    
+
+    Extract:
+    - intent
+    - employee_names (if any)
+    - filters (status, name_like)
+    - date_range (if any)
+
+    Query: {query}
+    """
+    #- dob
+    response = call_llm(prompt)
+    response = clean_llm_json(response)
+    print("JSON response : ", response)
+    return json.loads(response)
+
+def clean_llm_json(response):
+    if not response:
+        raise ValueError("Empty response from LLM")
+
+    # Remove markdown code blocks
+    response = response.strip()
+
+    if response.startswith("```"):
+        response = response.replace("```json", "").replace("```", "").strip()
+
+    # Extra safety (sometimes model adds text before JSON)
+    start = response.find("{")
+    end = response.rfind("}")
+
+    if start != -1 and end != -1:
+        response = response[start:end+1]
+
+    return response
+
 def handle_sql_query(user_query, SCHEMA_PROMPT):
     try:
         if not user_query["raw"].strip():
@@ -153,30 +326,63 @@ def handle_sql_query(user_query, SCHEMA_PROMPT):
 
         query = user_query["raw"]
 
-        names = extract_employee_names(query)
+        # names = extract_employee_names(query)
+        # metric = detect_metric(query)
 
-        if not names:
+        """ if not names:
             return {
                 "type": "text",
                 "message": "Please specify employee name."
+            } """
+
+        intent_data = extract_structured_intent(query)
+
+        metric = intent_data.get("intent")
+        # filters = intent_data.get("filters", {})
+        # names = intent_data.get("employee_names", [])
+
+        print("Detected metric : ", metric)
+        if not metric:
+            return {
+                "type": "text",
+                "message": "Sorry, I couldn't understand what data you are looking for."
             }
 
+        
+        user_ids, error = enforce_name_filter(query)
 
-        if user_query["name"]:
+        if error:
+            return {
+                "type": "text",
+                "message": error
+            }
+
+        """ if not names:
+            return {
+                "type": "text",
+                "message": "Please specify employee name."
+            } """
+
+
+        """ if user_query["name"]:
             query += f" for employee {user_query['name']}"
 
         if user_query["date_range"]:
-            query += f" | DATE_RANGE: {user_query['date_range']}"
+            query += f" | DATE_RANGE: {user_query['date_range']}" """
 
 
-        start_date, end_date = extract_date_range(query)
+        """ start_date, end_date = extract_date_range(query)
 
         if start_date or end_date:
-            query += f" | DATE_FILTER: {start_date} to {end_date}"        
+            query += f" | DATE_FILTER: {start_date} to {end_date}"         """
 
         # Step 1: Generate SQL
-        sql_query = generate_sql_strict(query, SCHEMA_PROMPT)
+        # sql_query = generate_sql_strict(query, SCHEMA_PROMPT)
 
+        date_range = extract_date_range(query)
+        print("Date Range : ", date_range)
+        sql_query = build_sql(metric, user_ids, date_range)
+        print("GENERATED SQL : ", sql_query)
         # Step 2: Enforce LIMIT
         sql_query = enforce_limit(sql_query)
 

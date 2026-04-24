@@ -1,7 +1,7 @@
 import requests
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL = "qwen2.5:7b"
+MODEL = "qwen3.5:cloud"
 
 def call_llm(prompt, temperature=0):
     try:

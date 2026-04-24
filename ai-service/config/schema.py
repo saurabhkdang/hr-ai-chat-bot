@@ -88,5 +88,21 @@ ALLOWED_SCHEMA = {
             "opening_cl": "Opening Casual Leave balance",
             "opening_pl": "Opening Privileged Leave balance"
         }
+    },
+
+    "hrdb_users_leaves" : {
+        "description" : "Have the data of applied leaves by any employee",
+        "columns" : {
+            "id" : "Primary Key",
+            "user_id" : "Employee ID",
+            "type_of_leave" : "Type of leave, example SL, CL, PL",
+            "start_date" : "Starting date of the leaves",
+            "end_date" : "Ending date of the leaves",
+            "total_days" : "Total days of leaves applied",
+            "status" : "Approved, Rejected or Pending for action",
+            "reason" : "Reason of leave application",
+            "action_date" : "Action taken on this date, approved/rejected",
+            "action_comment" : "Commented added for the action taken"
+        }
     }
 }

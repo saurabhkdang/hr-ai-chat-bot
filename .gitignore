@@ -1,2 +1,11 @@
 .env
 ai-service/.env
+ai-service/__pycache__/
+ai-service/*.py[cod]
+ai-service/*.pyo
+ai-service/*.pyd
+ai-service/__pycache__/*.*
+ai-service/utils/__pycache__/*.*
+ai-service/services/__pycache__/*.*
+ai-service/tests/__pycache__/*.*
+ai-service/config/__pycache__/*.*

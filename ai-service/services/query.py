@@ -4,12 +4,17 @@ from services.sql_service import handle_sql_query, build_schema_prompt
 from services.hybrid import is_hybrid_query, handle_hybrid_query
 from utils.parser import parse_query
 from config.schema import ALLOWED_SCHEMA
+from services.comparison import is_comparison_query, handle_comparison_query
 
 def handle_query(user_query):
     parsed = parse_query(user_query)
 
     # if is_hybrid_query(parsed):
         # return handle_hybrid_query(parsed)
+    
+    # 🔥 STEP 0: Comparison check (TOP PRIORITY)
+    if is_comparison_query(user_query):
+        return handle_comparison_query(user_query)
 
     intent = detect_intent(parsed)
     print("INTENT : ", intent)
