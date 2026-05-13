@@ -9,9 +9,16 @@ def build_sql(metric, user_ids=None, date_range=None, filters=None):
     table = config["table"]
     alias = config["alias"]
     date_column = config.get("date_column")
+    group_by = config.get("group_by", [])
 
     # 🔥 SELECT clause
-    if config.get("aggregation") == "SUM":
+    if config.get("aggregation") == "SUM" and config.get("aggregation_columns"):
+        cols = ", ".join(
+            f"SUM({alias}.{column}) as {result_alias}"
+            for column, result_alias in config["aggregation_columns"].items()
+        )
+
+    elif config.get("aggregation") == "SUM":
         cols = f"SUM({alias}.{config['aggregation_column']}) as total_value"
 
     elif "columns" in config:
@@ -23,8 +30,12 @@ def build_sql(metric, user_ids=None, date_range=None, filters=None):
     else:
         raise ValueError(f"No column defined for metric: {metric}")
 
+    select_columns = cols
+    if table != "api_users_hrdb":
+        select_columns = f"u.name, {cols}"
+
     sql = f"""
-    SELECT u.name, {cols}
+    SELECT {select_columns}
     FROM api_users_hrdb u
     """
 
@@ -67,7 +78,11 @@ def build_sql(metric, user_ids=None, date_range=None, filters=None):
                 sql += " AND u.status = 1 "
 
             elif key == "name_like":
-                sql += f" AND u.name LIKE '%{value}%' "
+                escaped_value = str(value).replace("'", "''")
+                sql += f" AND u.name LIKE '%%{escaped_value}%%' "
+
+    if group_by:
+        sql += " GROUP BY " + ", ".join(group_by)
 
     return sql.strip()
 

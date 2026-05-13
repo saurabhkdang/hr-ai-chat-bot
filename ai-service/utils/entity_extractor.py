@@ -2,6 +2,11 @@ from utils.llm_service import call_llm
 import json
 import re
 
+MONTH_WORDS = (
+    "january|february|march|april|may|june|july|august|september|october|november|december|"
+    "jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec"
+)
+
 def clean_name(name):
     noise_words = ["for", "employee", "report", "data"]
 
@@ -12,6 +17,13 @@ def clean_name(name):
 
 def fallback_name_extraction(query):
     query = query.lower()
+
+    direct_match = re.search(
+        r"\b(?:named|name(?:\s+is)?|contain|contains|like)\s+([a-z]{3,}(?:\s+[a-z]{3,}){0,3})\b",
+        query
+    )
+    if direct_match:
+        return [direct_match.group(1).strip()]
 
     # Only match 2–4 word sequences (reduces noise)
     matches = re.findall(r"\b([a-z]{3,}(?:\s+[a-z]{3,}){1,3})\b", query)
@@ -25,6 +37,33 @@ def fallback_name_extraction(query):
             filtered.append(m)
 
     return filtered
+
+def fast_name_extraction(query):
+    query = query.lower()
+
+    patterns = [
+        rf"\b(?:of|for)\s+([a-z]{{2,}}(?:\s+[a-z]{{2,}}){{0,3}}?)(?=\s+(?:in\s+(?:{MONTH_WORDS})\b|on\b|from\b|between\b|and\b|with\b|where\b|policy\b|rules\b)|$)",
+        r"\b(?:named|name(?:\s+is)?|contain|contains|like)\s+([a-z]{2,}(?:\s+[a-z]{2,}){0,3})\b",
+        r"^([a-z]{2,}(?:\s+[a-z]{2,}){0,3}?)(?=\s+(?:leave|attendance|salary|report|status|dob|date|email|phone|address|till|today|in|for|of|and)\b)",
+    ]
+
+    noise_words = {
+        "leave", "balance", "attendance", "report", "policy", "rules",
+        "active", "inactive", "employee", "employees", "details", "data", "status"
+    }
+
+    for pattern in patterns:
+        match = re.search(pattern, query, re.IGNORECASE)
+        if not match:
+            continue
+
+        candidate = re.sub(r"\s+", " ", match.group(1)).strip()
+        words = [word for word in candidate.split() if word not in noise_words and not word.isdigit()]
+
+        if 1 <= len(words) <= 4:
+            return [" ".join(words)]
+
+    return []
 
 def clean_llm_json(response):
     if not response:
@@ -46,6 +85,11 @@ def clean_llm_json(response):
     return response
 
 def extract_employee_names(query: str):
+    fast_names = fast_name_extraction(query)
+    if fast_names:
+        print("Fast extracted names:", fast_names)
+        return fast_names
+
     prompt = f"""
     Extract employee names from the query.
 
@@ -96,9 +140,9 @@ def extract_employee_names(query: str):
         # Normalize spaces
         name = re.sub(r'\s+', ' ', name).strip()
 
-        # Keep only 2–4 word names (important)
+        # Keep only 1–4 word names so single-name lookups still work.
         words = name.split()
-        if 2 <= len(words) <= 4:
+        if 1 <= len(words) <= 4:
             cleaned_names.append(name)
     print("Cleaned names after processing:", cleaned_names)
     # 🔥 Step 2: fallback if empty

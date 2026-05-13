@@ -9,3 +9,13 @@ ai-service/utils/__pycache__/*.*
 ai-service/services/__pycache__/*.*
 ai-service/tests/__pycache__/*.*
 ai-service/config/__pycache__/*.*
+*.pyc
+*.pyc
+/ai-service/__pycache__
+/ai-service/services/__pycache__
+/ai-service/utils/__pycache__
+*.pyc
+/ai-service/utils/__pycache__
+/ai-service/services/__pycache__
+/ai-service/__pycache__
+/ai-service/utils/__pycache__

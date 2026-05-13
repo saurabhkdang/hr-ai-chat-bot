@@ -244,7 +244,7 @@ def detect_metric(query):
     q = query.lower()
     print("Q : ",q)
     # 🔥 Employee list (HIGH PRIORITY)
-    if "employee" in q or "employees" in q:
+    if any(word in q for word in ["employee", "employees", "emplyoee", "emplyoees"]):
         return "employee_list"
 
     # 🔥 Attendance
@@ -261,6 +261,46 @@ def detect_metric(query):
 
     # ❌ REMOVE bad default
     return None
+
+def should_use_fast_sql_path(metric: str):
+    return metric in {"employee_list", "leave_balance", "attendance", "applied_leaves"}
+
+def extract_name_like_filter(query: str):
+    match = re.search(
+        r"\b(?:name\s+contain|name\s+contains|contain|contains|like|named|name\s+is)\s+([a-zA-Z]{2,}(?:\s+[a-zA-Z]{2,}){0,3})\b",
+        query,
+        re.IGNORECASE
+    )
+
+    if not match:
+        return None
+
+    value = match.group(1).strip().lower()
+    return re.sub(r"\s+", " ", value)
+
+def extract_fast_filters(query: str, metric: str):
+    filters = {}
+    q = query.lower()
+
+    if metric == "employee_list":
+        if "active" in q and "inactive" not in q:
+            filters["status"] = "active"
+
+        name_like = extract_name_like_filter(query)
+        if name_like:
+            filters["name_like"] = name_like
+
+    return filters
+
+def fallback_structured_intent(query: str):
+    metric = detect_metric(query)
+
+    return {
+        "intent": metric,
+        "employee_names": extract_employee_names(query),
+        "filters": extract_fast_filters(query, metric) if metric else {},
+        "date_range": extract_date_range(query)
+    }
 
 def extract_structured_intent(query):
     prompt = f"""
@@ -286,9 +326,15 @@ def extract_structured_intent(query):
     """
     #- dob
     response = call_llm(prompt)
-    response = clean_llm_json(response)
-    print("JSON response : ", response)
-    return json.loads(response)
+    if not response:
+        return fallback_structured_intent(query)
+
+    try:
+        response = clean_llm_json(response)
+        print("JSON response : ", response)
+        return json.loads(response)
+    except Exception:
+        return fallback_structured_intent(query)
 
 def clean_llm_json(response):
     if not response:
@@ -335,10 +381,13 @@ def handle_sql_query(user_query, SCHEMA_PROMPT):
                 "message": "Please specify employee name."
             } """
 
-        intent_data = extract_structured_intent(query)
+        metric = detect_metric(query)
+        filters = extract_fast_filters(query, metric) if metric else {}
 
-        metric = intent_data.get("intent")
-        # filters = intent_data.get("filters", {})
+        if not metric or not should_use_fast_sql_path(metric):
+            intent_data = extract_structured_intent(query)
+            metric = intent_data.get("intent")
+            filters = intent_data.get("filters", {}) or {}
         # names = intent_data.get("employee_names", [])
 
         print("Detected metric : ", metric)
@@ -348,14 +397,18 @@ def handle_sql_query(user_query, SCHEMA_PROMPT):
                 "message": "Sorry, I couldn't understand what data you are looking for."
             }
 
-        
-        user_ids, error = enforce_name_filter(query)
+        user_ids = None
 
-        if error:
-            return {
-                "type": "text",
-                "message": error
-            }
+        # Employee list queries can be satisfied directly from extracted filters.
+        # Avoid a second LLM round-trip for name extraction on this path.
+        if metric != "employee_list":
+            user_ids, error = enforce_name_filter(query)
+
+            if error:
+                return {
+                    "type": "text",
+                    "message": error
+                }
 
         """ if not names:
             return {
@@ -381,7 +434,7 @@ def handle_sql_query(user_query, SCHEMA_PROMPT):
 
         date_range = extract_date_range(query)
         print("Date Range : ", date_range)
-        sql_query = build_sql(metric, user_ids, date_range)
+        sql_query = build_sql(metric, user_ids, date_range, filters)
         print("GENERATED SQL : ", sql_query)
         # Step 2: Enforce LIMIT
         sql_query = enforce_limit(sql_query)
@@ -498,23 +551,77 @@ def normalize_rows(result):
 def build_final_response(rows, user_query):
     base = format_response(rows, user_query)
 
-    # Add summary only if data exists
-    if rows:
+    # Avoid a second LLM call for simple SQL table responses.
+    if rows and base.get("type") == "table":
         summary = generate_summary(rows, user_query)
         base["summary"] = summary
 
     return base
 
 def generate_summary(rows, user_query):
-    prompt = f"""
-    Convert the following database result into a short human-friendly response.
+    query_text = user_query.lower()
 
-    User Question:
-    {user_query}
+    if rows and all("status" in row for row in rows):
+        name = rows[0].get("name") or rows[0].get("u.name")
+        status_counts = {}
+        status_labels = {
+            "P": "Present",
+            "A": "Absent",
+            "WO": "Weekly Off",
+            "L": "Leave",
+            "H": "Holiday",
+            "HD": "Half Day"
+        }
 
-    Data:
-    {rows}
+        for row in rows:
+            status = str(row.get("status", "")).strip()
+            if not status:
+                continue
+            status_counts[status] = status_counts.get(status, 0) + 1
 
-    Keep it short and clear.
-    """
-    return call_llm(prompt)
+        if status_counts:
+            parts = []
+            for status, count in sorted(status_counts.items()):
+                label = status_labels.get(status, status)
+                unit = "day" if count == 1 else "days"
+                parts.append(f"{label} {count} {unit}")
+
+            if name and len(status_counts) == 1 and sum(status_counts.values()) == 1:
+                only_status = next(iter(status_counts))
+                label = status_labels.get(only_status, only_status)
+                return f"Attendance status for {name} is {label}."
+
+            if name:
+                return f"Attendance summary for {name}: {', '.join(parts)}."
+            return ", ".join(parts) + "."
+
+    if len(rows) == 1:
+        row = rows[0]
+        name = row.get("name") or row.get("u.name")
+
+        value_parts = []
+        for key, value in row.items():
+            if key in {"name", "u.name"}:
+                continue
+
+            label = key.replace("total_", "").replace("_", " ")
+            value_parts.append(f"{label}: {value}")
+
+        if name and value_parts:
+            return f"{name} -> {', '.join(value_parts)}."
+
+        if value_parts:
+            return ", ".join(value_parts) + "."
+
+    name_values = []
+    seen_names = set()
+    for row in rows:
+        name = row.get("name") or row.get("u.name")
+        if name and name not in seen_names:
+            seen_names.add(name)
+            name_values.append(str(name))
+
+    if name_values and any(word in query_text for word in ["employee", "employees", "name", "list", "show", "get"]):
+        return f"Found {len(name_values)} matching employees: {', '.join(name_values)}."
+
+    return f"Found {len(rows)} matching records."

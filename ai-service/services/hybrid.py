@@ -169,18 +169,8 @@ def handle_hybrid_query(parsed_query):
             sql_result = handle_sql_query(parse_query(sql_clean), schema_prompt)
 
         # 2. Vector processing (explanation)
-        # 2. Vector (LLM cleaned query)
-        if vector_part:
-            vector_query = extract_vector_query_llm(vector_part)
-        else:
-            vector_query = extract_vector_query_llm(parsed_query["raw"])
-        # vector_query = extract_vector_query_llm(parsed_query["raw"])
+        vector_query = (vector_part or parsed_query["raw"]).strip()
         print("Vector Query : ", vector_query)
-        # if not vector_query:
-        #     vector_query = vector_part or parsed_query["raw"]
-
-        if not vector_query:
-            vector_query = vector_part
 
         if not vector_query:
             return sql_result  # skip vector entirely
@@ -255,6 +245,9 @@ def get_text_from_vector_result(vector_result):
 
     if isinstance(vector_result, dict):
         # Common cases
+        if "message" in vector_result:
+            return vector_result["message"]
+
         if "content" in vector_result:
             return vector_result["content"]
 
@@ -377,16 +370,8 @@ def build_hybrid_response(sql_result, vector_result):
 
     if vector_result:
         raw_text = get_text_from_vector_result(vector_result)
-
-        # 🔥 summarize
-        summary_text = summarize_vector_result(raw_text)
-
-        # 🔥 classify (fast)
+        summary_text = raw_text.strip()
         meta = classify_vector_content_rule_based(summary_text)
-
-        # 🔥 fallback to LLM
-        if len(summary_text.split()) > 20 and meta["type"] == "text":
-            meta = classify_vector_content(summary_text)
 
         response["sections"].append({
             "type": meta.get("type", "text"),

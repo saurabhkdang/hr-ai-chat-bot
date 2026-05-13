@@ -35,11 +35,13 @@ METRIC_CONFIG = {
     "leave_balance": {
         "table": "hrdb_attendance_metrics",
         "alias": "a",
-        "columns": [
-            "closing_pl",
-            "closing_cl",
-            "closing_sl"
-        ],
+        "aggregation": "SUM",
+        "aggregation_columns": {
+            "availed_pl": "total_availed_pl",
+            "availed_cl": "total_availed_cl",
+            "availed_sl": "total_availed_sl"
+        },
+        "group_by": ["u.id", "u.name"],
         "date_column": "month_year",
     },
     "employee_list": {

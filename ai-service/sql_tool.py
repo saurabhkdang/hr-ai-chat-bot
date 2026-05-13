@@ -16,6 +16,7 @@ def run_sql(query, params=None):
     try:
         
         connection = pymysql.connect(**get_db_config())
+        print("conn : " , connection)
         cursor = connection.cursor()
 
         print("Executing query:", query)

@@ -13,8 +13,10 @@ def call_llm(prompt, temperature=0):
                 "prompt": prompt,
                 "temperature": temperature,
                 "stream": False
-            }
+            },
+            timeout=30
         )
+        response.raise_for_status()
 
         result = response.json()
         return result.get("response", "").strip()
