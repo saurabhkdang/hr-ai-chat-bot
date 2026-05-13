@@ -42,14 +42,14 @@ def fast_name_extraction(query):
     query = query.lower()
 
     patterns = [
-        rf"\b(?:of|for)\s+([a-z]{{2,}}(?:\s+[a-z]{{2,}}){{0,3}}?)(?=\s+(?:in\s+(?:{MONTH_WORDS})\b|on\b|from\b|between\b|and\b|with\b|where\b|policy\b|rules\b)|$)",
+        rf"\b(?:of|for)\s+([a-z]{{2,}}(?:\s+[a-z]{{2,}}){{0,3}}?)(?=\s+(?:in\s+(?:{MONTH_WORDS})\b|on\b|from\b|between\b|and\b|with\b|where\b|policy\b|rules\b|reporting\s+manager\b|manager\b|reports\s+to\b|report\s+to\b)|$)",
         r"\b(?:named|name(?:\s+is)?|contain|contains|like)\s+([a-z]{2,}(?:\s+[a-z]{2,}){0,3})\b",
-        r"^([a-z]{2,}(?:\s+[a-z]{2,}){0,3}?)(?=\s+(?:leave|attendance|salary|report|status|dob|date|email|phone|address|till|today|in|for|of|and)\b)",
+        r"^([a-z]{2,}(?:\s+[a-z]{2,}){0,3}?)(?=\s+(?:leave|attendance|salary|report|reporting|manager|status|dob|date|email|phone|address|till|today|in|for|of|and)\b)",
     ]
 
     noise_words = {
         "leave", "balance", "attendance", "report", "policy", "rules",
-        "active", "inactive", "employee", "employees", "details", "data", "status"
+        "active", "inactive", "employee", "employees", "details", "data", "status", "manager", "reporting"
     }
 
     for pattern in patterns:
@@ -132,7 +132,7 @@ def extract_employee_names(query: str):
         name = name.lower().strip()
 
         # Remove noise words
-        name = re.sub(r'\b(for|employee|of|report|attendance|details|data|last|days)\b', '', name)
+        name = re.sub(r'\b(for|employee|of|report|reporting|manager|attendance|details|data|last|days)\b', '', name)
 
         # Remove special chars
         name = re.sub(r'[^a-zA-Z\s]', '', name)

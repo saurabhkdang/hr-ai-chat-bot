@@ -193,7 +193,8 @@ def is_valid_sql_query(user_query):
     field_keywords = [
         "dob", "date of birth",
         "email", "phone", "mobile",
-        "address", "salary"
+        "address", "salary",
+        "manager", "report to", "reports to", "reporting manager"
     ]
 
     # ✅ Field-based lookup
@@ -243,6 +244,12 @@ def is_valid_sql_query11(user_query):
 def detect_metric(query):
     q = query.lower()
     print("Q : ",q)
+    if any(phrase in q for phrase in ["manager of", "manager name", "reporting manager", "reports to", "report to"]):
+        return "manager_info"
+
+    if any(phrase in q for phrase in ["job description", "job title", "designation", "job role"]):
+        return "job_description"
+
     # 🔥 Employee list (HIGH PRIORITY)
     if any(word in q for word in ["employee", "employees", "emplyoee", "emplyoees"]):
         return "employee_list"
@@ -263,7 +270,7 @@ def detect_metric(query):
     return None
 
 def should_use_fast_sql_path(metric: str):
-    return metric in {"employee_list", "leave_balance", "attendance", "applied_leaves"}
+    return metric in {"employee_list", "leave_balance", "attendance", "applied_leaves", "job_description", "manager_info"}
 
 def extract_name_like_filter(query: str):
     match = re.search(
@@ -281,6 +288,12 @@ def extract_name_like_filter(query: str):
 def extract_fast_filters(query: str, metric: str):
     filters = {}
     q = query.lower()
+
+    if metric == "leave_balance":
+        if any(phrase in q for phrase in ["leave balance", "balance", "remaining leave", "remaining leaves", "leave remaining"]):
+            filters["leave_view"] = "balance"
+        elif any(phrase in q for phrase in ["leave taken", "leaves taken", "taken leave", "taken leaves", "availed"]):
+            filters["leave_view"] = "taken"
 
     if metric == "employee_list":
         if "active" in q and "inactive" not in q:
@@ -313,7 +326,9 @@ def extract_structured_intent(query):
     - leave_balance
     - employee_list
     - employee_info
+    - manager_info
     - applied_leaves
+    - job_description
     
 
     Extract:

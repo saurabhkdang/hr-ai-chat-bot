@@ -10,12 +10,23 @@ def build_sql(metric, user_ids=None, date_range=None, filters=None):
     alias = config["alias"]
     date_column = config.get("date_column")
     group_by = config.get("group_by", [])
+    join_on = config.get("join_on", f"u.id = {alias}.user_id")
+    extra_joins = config.get("joins", [])
+    filters = filters or {}
+    aggregation_columns = config.get("aggregation_columns")
+
+    if config.get("aggregation_column_groups"):
+        leave_view = filters.get("leave_view", "taken")
+        aggregation_columns = config["aggregation_column_groups"].get(leave_view)
 
     # 🔥 SELECT clause
-    if config.get("aggregation") == "SUM" and config.get("aggregation_columns"):
+    if config.get("select_expressions"):
+        cols = ", ".join(config["select_expressions"])
+
+    elif config.get("aggregation") == "SUM" and aggregation_columns:
         cols = ", ".join(
             f"SUM({alias}.{column}) as {result_alias}"
-            for column, result_alias in config["aggregation_columns"].items()
+            for column, result_alias in aggregation_columns.items()
         )
 
     elif config.get("aggregation") == "SUM":
@@ -42,7 +53,12 @@ def build_sql(metric, user_ids=None, date_range=None, filters=None):
     # 🔥 JOIN
     if table != "api_users_hrdb":
         sql += f"""
-        JOIN {table} {alias} ON u.id = {alias}.user_id
+        JOIN {table} {alias} ON {join_on}
+        """
+
+    for join in extra_joins:
+        sql += f"""
+        JOIN {join['table']} {join['alias']} ON {join['on']}
         """
 
     sql += " WHERE 1=1 "

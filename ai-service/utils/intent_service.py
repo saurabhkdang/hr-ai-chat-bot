@@ -85,7 +85,7 @@ def detect_intent(query):
         # 🔥 ADD THESE
         "dob", "date of birth",
         "email", "phone",
-        "address",
+        "address", "manager", "reporting manager", "reports to", "report to",
         "joining date", "doj", "leaves taken"
     ]
 
@@ -142,6 +142,9 @@ def detect_intent(query):
 
     if any(word in q for word in ["get", "list", "show"]) and "employee" in q:
         sql_score += 2
+
+    if any(phrase in q for phrase in ["manager of", "reporting manager", "reports to", "report to"]):
+        sql_score += 3
     
     # 🔥 Boost vector for definition queries
     if is_definition_query(q):
@@ -173,7 +176,7 @@ def detect_intent(query):
     # ⚠️ WEAK SQL (like "leave details") → DO NOT TRUST
     # ⚠️ weak SQL guard but allow employee queries
     if sql_score <= 2 and vector_score == 0:
-        if "employee" in q or "name" in q:
+        if "employee" in q or "name" in q or "manager" in q:
             return "SQL"
         return "VECTOR"
         # return detect_intent_llm(query)
@@ -197,7 +200,7 @@ def detect_intent_rule_based(query):
 
     strong_sql = [
         "balance", "remaining", "total", "count",
-        "attendance", "salary", "report"
+        "attendance", "salary", "report", "manager"
     ]
 
     weak_sql = [
