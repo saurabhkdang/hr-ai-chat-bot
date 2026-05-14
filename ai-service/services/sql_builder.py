@@ -11,8 +11,18 @@ def build_sql(metric, user_ids=None, date_range=None, filters=None):
     date_column = config.get("date_column")
     group_by = config.get("group_by", [])
     join_on = config.get("join_on", f"u.id = {alias}.user_id")
-    extra_joins = config.get("joins", [])
+    extra_joins = list(config.get("joins", []))
     filters = filters or {}
+    result_mode = filters.get("result_mode")
+    if config.get("mode_joins") and result_mode in config["mode_joins"]:
+        extra_joins = config["mode_joins"][result_mode]
+
+    if table == "api_users_hrdb":
+        if filters.get("job_title_like"):
+            extra_joins.append({"table": "api_job_description", "alias": "jd", "on": "u.jd_id = jd.id"})
+        if filters.get("attendance_status"):
+            extra_joins.append({"table": "hrdb_users_attendance", "alias": "att", "on": "u.id = att.user_id"})
+
     aggregation_columns = config.get("aggregation_columns")
 
     if config.get("aggregation_column_groups"):
@@ -20,7 +30,10 @@ def build_sql(metric, user_ids=None, date_range=None, filters=None):
         aggregation_columns = config["aggregation_column_groups"].get(leave_view)
 
     # 🔥 SELECT clause
-    if config.get("select_expressions"):
+    if result_mode == "count":
+        cols = "COUNT(DISTINCT u.id) as employee_count"
+
+    elif config.get("select_expressions"):
         cols = ", ".join(config["select_expressions"])
 
     elif config.get("aggregation") == "SUM" and aggregation_columns:
@@ -42,7 +55,7 @@ def build_sql(metric, user_ids=None, date_range=None, filters=None):
         raise ValueError(f"No column defined for metric: {metric}")
 
     select_columns = cols
-    if table != "api_users_hrdb":
+    if table != "api_users_hrdb" and result_mode != "count":
         select_columns = f"u.name, {cols}"
 
     sql = f"""
@@ -61,7 +74,7 @@ def build_sql(metric, user_ids=None, date_range=None, filters=None):
         JOIN {join['table']} {join['alias']} ON {join['on']}
         """
 
-    sql += " WHERE 1=1 "
+    sql += " WHERE 1=1 and u.status = 1 "  # only active employees by default
 
     # 🔥 User filter
     if user_ids:
@@ -86,8 +99,14 @@ def build_sql(metric, user_ids=None, date_range=None, filters=None):
         elif date_column and start and not end:
             sql += f" AND {alias}.{date_column} >= '{start}' "
 
+    if table == "api_users_hrdb" and filters.get("attendance_status") and date_range:
+        start, end = date_range
+        if start and end:
+            sql += f" AND att.attendance_date BETWEEN '{start}' AND '{end}' "
+
     # 🔥 Filters
     if filters:
+        print("Filters: ", filters)
         for key, value in filters.items():
 
             if key == "status" and value == "active":
@@ -97,7 +116,23 @@ def build_sql(metric, user_ids=None, date_range=None, filters=None):
                 escaped_value = str(value).replace("'", "''")
                 sql += f" AND u.name LIKE '%%{escaped_value}%%' "
 
-    if group_by:
+            elif key == "job_title_like":
+                escaped_value = str(value).replace("'", "''").lower()
+                sql += f" AND LOWER(jd.job_title) LIKE '%%{escaped_value}%%' "
+
+            elif key == "attendance_status":
+                status_value = str(value).upper()
+                if status_value == "ABSENT":
+                    status_value = "PL"
+                if status_value == "A":
+                    status_value = "PL"
+                sql += f" AND att.status = '{status_value}' "
+
+            elif key == "report_to_ids":
+                ids = ",".join(map(str, value))
+                sql += f" AND u.report_to IN ({ids}) "
+
+    if group_by and result_mode != "count":
         sql += " GROUP BY " + ", ".join(group_by)
 
     return sql.strip()

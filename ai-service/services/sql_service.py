@@ -46,12 +46,12 @@ def extract_date_range(query: str):
     if "till today" in query or "until today" in query:
         return None, today.strftime('%Y-%m-%d')
 
-    # 🔥 4. specific date (23rd March 2026)
-    match = re.search(r"on (\d{1,2})(st|nd|rd|th)? (\w+) (\d{4})", query)
+    # 🔥 4. specific date (23rd March 2026 or 9th May)
+    match = re.search(r"on (\d{1,2})(st|nd|rd|th)? (\w+)(?: (\d{4}))?", query)
     if match:
         day = int(match.group(1))
         month_str = match.group(3)
-        year = int(match.group(4))
+        year = int(match.group(4)) if match.group(4) else today.year
 
         try:
             date_obj = datetime.strptime(f"{day} {month_str} {year}", "%d %B %Y")
@@ -152,7 +152,15 @@ def retry_with_error(user_query, sql_query, error_msg, schema_prompt):
 
     Return only corrected SQL.
     """
-    conent = call_llm(prompt)
+    try:
+        content = call_llm(prompt)
+    except Exception as e:
+        print(f"Retry LLM failed: {e}")
+        return sql_query
+
+    if not content:
+        return sql_query
+
     # 🔥 CLEAN RESPONSE
     # content = content.replace("```sql", "").replace("```", "").strip()
 
@@ -187,7 +195,10 @@ def is_lookup_query(q):
 def is_valid_sql_query(user_query):
     user_query = user_query.lower()
 
-    strong_sql = ["balance", "report", "attendance", "salary", "taken"]
+    strong_sql = [
+        "balance", "report", "attendance", "salary", "taken",
+        "count", "how many", "job description", "job title", "designation", "job role"
+    ]
     weak_sql = ["leave", "details"]
 
     field_keywords = [
@@ -244,14 +255,22 @@ def is_valid_sql_query11(user_query):
 def detect_metric(query):
     q = query.lower()
     print("Q : ",q)
+    if "hierarchy" in q:
+        return "employee_hierarchy"
+
     if any(phrase in q for phrase in ["manager of", "manager name", "reporting manager", "reports to", "report to"]):
         return "manager_info"
 
-    if any(phrase in q for phrase in ["job description", "job title", "designation", "job role"]):
+    if any(word in q for word in ["team member", "team members", "direct report", "direct reports"]):
+        return "employee_list"
+
+    if any(word in q for word in ["employee", "employees", "emplyoee", "emplyoees"]):
+        return "employee_list"
+
+    if any(phrase in q for phrase in ["job description of", "job title of", "designation of", "job role of", "what is job description", "what is job title"]):
         return "job_description"
 
-    # 🔥 Employee list (HIGH PRIORITY)
-    if any(word in q for word in ["employee", "employees", "emplyoee", "emplyoees"]):
+    if any(phrase in q for phrase in ["job description", "job title", "designation", "job role"]):
         return "employee_list"
 
     # 🔥 Attendance
@@ -270,7 +289,7 @@ def detect_metric(query):
     return None
 
 def should_use_fast_sql_path(metric: str):
-    return metric in {"employee_list", "leave_balance", "attendance", "applied_leaves", "job_description", "manager_info"}
+    return metric in {"employee_list", "leave_balance", "attendance", "applied_leaves", "job_description", "manager_info", "employee_hierarchy"}
 
 def extract_name_like_filter(query: str):
     match = re.search(
@@ -284,6 +303,51 @@ def extract_name_like_filter(query: str):
 
     value = match.group(1).strip().lower()
     return re.sub(r"\s+", " ", value)
+
+def extract_job_title_filter(query: str):
+    patterns = [
+        r"\bwith\s+([a-zA-Z][a-zA-Z\s\-/]{1,60}?)\s+as\s+(?:job description|job title|designation|job role)\b",
+        r"\b(?:job description|job title|designation|job role)\s+(?:is|as|like)\s+([a-zA-Z][a-zA-Z\s\-/]{1,60})\b",
+        r"\bwith\s+([a-zA-Z][a-zA-Z\s\-/]{1,60}?)\s+(?:designation|job title|job role)\b"
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, query, re.IGNORECASE)
+        if not match:
+            continue
+
+        value = re.sub(r"\s+", " ", match.group(1)).strip().lower()
+        return value.strip(" -/")
+
+    return None
+
+
+def extract_manager_name(query: str):
+    patterns = [
+        r"team members?(?: name)? of\s+([a-zA-Z][a-zA-Z\s]{1,60})",
+        r"direct reports?(?: name)? of\s+([a-zA-Z][a-zA-Z\s]{1,60})",
+        r"reports? to\s+([a-zA-Z][a-zA-Z\s]{1,60})",
+        r"manager(?: name)? of\s+([a-zA-Z][a-zA-Z\s]{1,60})",
+        r"reporting manager of\s+([a-zA-Z][a-zA-Z\s]{1,60})"
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, query, re.IGNORECASE)
+        if match:
+            name = match.group(1).strip().lower()
+            return re.sub(r"\s+", " ", name)
+
+    return None
+
+
+def requires_employee_name_filter(metric: str, filters: dict):
+    if metric == "employee_list":
+        return False
+
+    if metric == "job_description" and filters.get("job_title_like"):
+        return False
+
+    return True
 
 def extract_fast_filters(query: str, metric: str):
     filters = {}
@@ -299,9 +363,43 @@ def extract_fast_filters(query: str, metric: str):
         if "active" in q and "inactive" not in q:
             filters["status"] = "active"
 
+        if "absent" in q:
+            filters["attendance_status"] = "PL"
+        
+        if "privilege" in q:
+            filters["attendance_status"] = "PL"
+
+        if "sick" in q:
+            filters["attendance_status"] = "SL"
+
+        if "casual" in q:
+            filters["attendance_status"] = "CL"
+
+        if "present" in q and "absent" not in q:
+            filters["attendance_status"] = "P"
+
         name_like = extract_name_like_filter(query)
         if name_like:
             filters["name_like"] = name_like
+
+        job_title_like = extract_job_title_filter(query)
+        if job_title_like:
+            filters["job_title_like"] = job_title_like
+
+        manager_name = extract_manager_name(query)
+        if manager_name:
+            filters["manager_name"] = manager_name
+
+        if any(phrase in q for phrase in ["how many", "count", "number of"]):
+            filters["result_mode"] = "count"
+
+    if metric == "job_description":
+        if any(phrase in q for phrase in ["how many", "count", "number of"]):
+            filters["result_mode"] = "count"
+
+        job_title_like = extract_job_title_filter(query)
+        if job_title_like:
+            filters["job_title_like"] = job_title_like
 
     return filters
 
@@ -315,6 +413,67 @@ def fallback_structured_intent(query: str):
         "date_range": extract_date_range(query)
     }
 
+
+def handle_employee_hierarchy_query(query: str):
+    names = extract_employee_names(query)
+    if not names:
+        return {
+            "type": "text",
+            "message": "Please specify an employee name for the hierarchy query."
+        }
+
+    user_ids, error = enforce_name_filter(query)
+    if error:
+        return {
+            "type": "text",
+            "message": error
+        }
+
+    if not user_ids:
+        return {
+            "type": "text",
+            "message": "No employee found for the hierarchy query."
+        }
+
+    user_id = user_ids[0]
+    sql = f"SELECT id, name, parent_path FROM api_users_hrdb WHERE id = {user_id}"
+    result = run_sql(sql)
+    rows = normalize_rows(result)
+
+    if not rows:
+        return {
+            "type": "text",
+            "message": "Unable to find hierarchy data for the specified employee."
+        }
+
+    row = rows[0]
+    parent_path = row.get("parent_path") or ""
+    if not parent_path:
+        return {
+            "type": "text",
+            "message": f"No hierarchy path found for {row.get('name')}."
+        }
+
+    path_ids = [pid for pid in parent_path.split("/") if pid.strip()]
+    if not path_ids:
+        return {
+            "type": "text",
+            "message": f"No hierarchy path found for {row.get('name')}."
+        }
+
+    placeholders = ",".join(path_ids)
+    manager_sql = f"SELECT id, name FROM api_users_hrdb WHERE id IN ({placeholders})"
+    manager_result = run_sql(manager_sql)
+    manager_rows = normalize_rows(manager_result)
+    id_to_name = {str(r.get("id")): r.get("name") for r in manager_rows}
+    chain = [id_to_name.get(pid, pid) for pid in path_ids]
+
+    return {
+        "type": "text",
+        "message": f"Hierarchy for {row.get('name')}: {' > '.join(chain)}"
+    }
+
+
 def extract_structured_intent(query):
     prompt = f"""
     Extract structured intent from the query.
@@ -327,6 +486,7 @@ def extract_structured_intent(query):
     - employee_list
     - employee_info
     - manager_info
+    - employee_hierarchy
     - applied_leaves
     - job_description
     
@@ -412,11 +572,25 @@ def handle_sql_query(user_query, SCHEMA_PROMPT):
                 "message": "Sorry, I couldn't understand what data you are looking for."
             }
 
+        if metric == "employee_hierarchy":
+            return handle_employee_hierarchy_query(query)
+
+        if metric == "employee_list" and filters.get("manager_name"):
+            manager_ids, error = enforce_name_filter(filters["manager_name"])
+            if error:
+                return {
+                    "type": "text",
+                    "message": error
+                }
+
+            filters["report_to_ids"] = manager_ids
+            filters.pop("manager_name", None)
+
         user_ids = None
 
         # Employee list queries can be satisfied directly from extracted filters.
         # Avoid a second LLM round-trip for name extraction on this path.
-        if metric != "employee_list":
+        if requires_employee_name_filter(metric, filters):
             user_ids, error = enforce_name_filter(query)
 
             if error:
@@ -451,11 +625,12 @@ def handle_sql_query(user_query, SCHEMA_PROMPT):
         print("Date Range : ", date_range)
         sql_query = build_sql(metric, user_ids, date_range, filters)
         print("GENERATED SQL : ", sql_query)
-        # Step 2: Enforce LIMIT
-        sql_query = enforce_limit(sql_query)
+        # Step 2: Enforce LIMIT when appropriate
+        skip_limit = should_skip_limit(metric, query, filters)
+        sql_query = enforce_limit(sql_query, skip_limit=skip_limit)
 
         # Step 3: Validate
-        is_valid, msg = validate_sql(sql_query)
+        is_valid, msg = validate_sql(sql_query, skip_limit=skip_limit)
         if not is_valid:
             print("[SQL INVALID BEFORE EXEC]", msg)
 
@@ -466,9 +641,9 @@ def handle_sql_query(user_query, SCHEMA_PROMPT):
                 SCHEMA_PROMPT
             )
 
-            sql_query = enforce_limit(sql_query)
+            sql_query = enforce_limit(sql_query, skip_limit=skip_limit)
 
-            is_valid, msg = validate_sql(sql_query)
+            is_valid, msg = validate_sql(sql_query, skip_limit=skip_limit)
 
             if not is_valid:
                 return {
@@ -496,15 +671,31 @@ def handle_sql_query(user_query, SCHEMA_PROMPT):
             "message": f"Error processing request: {str(e)}"
         }
 
-def enforce_limit(query: str, limit=10):
+def enforce_limit(query: str, limit=10, skip_limit=False):
     q = query.strip().rstrip(";")
 
-    if "LIMIT" not in q.upper():
+    if "LIMIT" not in q.upper() and not skip_limit:
         return q + f" LIMIT {limit};"
 
     return q
 
-def validate_sql(query: str) -> (bool, str):
+
+def should_skip_limit(metric: str, query: str, filters: dict):
+    query_text = query.lower() if query else ""
+
+    if filters and filters.get("result_mode") == "count":
+        return False
+
+    if metric == "employee_list":
+        if filters and filters.get("report_to_ids"):
+            return True
+        if any(phrase in query_text for phrase in ["all team members", "all direct reports", "all employees", "all team", "complete team"]):
+            return True
+
+    return False
+
+
+def validate_sql(query: str, skip_limit=False) -> tuple[bool, str]:
     q = query.upper().strip()
 
     # must start with SELECT
@@ -524,8 +715,8 @@ def validate_sql(query: str) -> (bool, str):
     if "SELECT *" in q:
         return False, "SELECT * not allowed"
 
-    # must have LIMIT
-    if "LIMIT" not in q:
+    # must have LIMIT unless the caller intentionally skipped it
+    if "LIMIT" not in q and not skip_limit:
         return False, "LIMIT missing"
 
     return True, "Valid"

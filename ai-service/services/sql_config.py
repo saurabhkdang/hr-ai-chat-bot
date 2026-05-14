@@ -90,6 +90,9 @@ METRIC_CONFIG = {
             "jdd.type",
             "jdd.description"
         ],
+        "mode_joins": {
+            "count": []
+        },
         "join_on": "u.jd_id = jd.id",
         "joins": [
             {
