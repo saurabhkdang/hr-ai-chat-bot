@@ -44,12 +44,13 @@ def fast_name_extraction(query):
     patterns = [
         rf"\b(?:of|for)\s+([a-z]{{2,}}(?:\s+[a-z]{{2,}}){{0,3}}?)(?=\s+(?:in\s+(?:{MONTH_WORDS})\b|on\b|from\b|between\b|and\b|with\b|where\b|policy\b|rules\b|reporting\s+manager\b|manager\b|reports\s+to\b|report\s+to\b)|$)",
         r"\b(?:named|name(?:\s+is)?|contain|contains|like)\s+([a-z]{2,}(?:\s+[a-z]{2,}){0,3})\b",
-        r"^([a-z]{2,}(?:\s+[a-z]{2,}){0,3}?)(?=\s+(?:leave|attendance|salary|report|reporting|manager|status|dob|date|email|phone|address|till|today|in|for|of|and)\b)",
+        r"^([a-z]{2,}(?:\s+[a-z]{2,}){0,3}?)(?=\s+(?:leave|attendance|salary|report|reporting|manager|status|dob|date|email|phone|address|till|today|in|for|of|and|how|many)\b)",
     ]
 
     noise_words = {
         "leave", "balance", "attendance", "report", "policy", "rules",
-        "active", "inactive", "employee", "employees", "details", "data", "status", "manager", "reporting"
+        "active", "inactive", "employee", "employees", "details", "data", "status", "manager", "reporting",
+        "how", "many", "count"
     }
 
     for pattern in patterns:

@@ -1,11 +1,10 @@
 import requests
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL = "qwen3.5:cloud"
+MODEL = "gemma4:31b-cloud"
 
 def call_llm(prompt, temperature=0):
     try:
-        print("PROMPT : ", prompt)
         response = requests.post(
             OLLAMA_URL,
             json={

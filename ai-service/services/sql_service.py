@@ -7,6 +7,7 @@ import re
 from utils.llm_service import call_llm
 from utils.entity_extractor import extract_employee_names
 from services.sql_builder import build_sql
+from services.intent_parser import parse_query_intelligent, normalize_intent_data
 import json
 
 ALLOWED_OPERATIONS = ["SELECT"]
@@ -531,6 +532,10 @@ def clean_llm_json(response):
     return response
 
 def handle_sql_query(user_query, SCHEMA_PROMPT):
+    """
+    New LLM-based query handler.
+    Flow: LLM (intent detection) → config-based SQL builder → execute
+    """
     try:
         if not user_query["raw"].strip():
             return {
@@ -538,127 +543,88 @@ def handle_sql_query(user_query, SCHEMA_PROMPT):
                 "message": "Please enter a query"
             }
 
-        if not is_valid_sql_query(user_query["raw"]):
-            print("SQL BLOCKED:", user_query["raw"])
-            return {
-                "type": "text",
-                "message": "Please provide more specific query"
-            }
-
         query = user_query["raw"]
 
-        # names = extract_employee_names(query)
-        # metric = detect_metric(query)
-
-        """ if not names:
-            return {
-                "type": "text",
-                "message": "Please specify employee name."
-            } """
-
-        metric = detect_metric(query)
-        filters = extract_fast_filters(query, metric) if metric else {}
-
-        if not metric or not should_use_fast_sql_path(metric):
-            intent_data = extract_structured_intent(query)
-            metric = intent_data.get("intent")
-            filters = intent_data.get("filters", {}) or {}
-        # names = intent_data.get("employee_names", [])
-
-        print("Detected metric : ", metric)
+        # ===== STEP 1: Parse with LLM =====
+        intent_data = parse_query_intelligent(query)
+        print("Parsed intent data:", intent_data)
+        intent_data = normalize_intent_data(intent_data)
+        print("Normalized intent data:", intent_data)
+        metric = intent_data.get("metric")
+        entities = intent_data.get("entities", {})
+        filters = intent_data.get("filters", {})
+        date_range = intent_data.get("date_range")
+        
+        print(f"[Query Handler] metric={metric}, entities={entities}, filters={filters}")
+        
         if not metric:
             return {
                 "type": "text",
                 "message": "Sorry, I couldn't understand what data you are looking for."
             }
 
+        # ===== STEP 2: Handle special metric cases =====
+        
+        # Hierarchy query is handled specially
         if metric == "employee_hierarchy":
-            return handle_employee_hierarchy_query(query)
-
-        if metric == "employee_list" and filters.get("manager_name"):
-            manager_ids, error = enforce_name_filter(filters["manager_name"])
-            if error:
-                return {
-                    "type": "text",
-                    "message": error
-                }
-
-            filters["report_to_ids"] = manager_ids
-            filters.pop("manager_name", None)
-
+            employee_name = entities.get("employees", [None])[0]
+            if not employee_name:
+                return {"type": "text", "message": "Please specify an employee name for the hierarchy query."}
+            return handle_employee_hierarchy_query(f"hierarchy of {employee_name}")
+        
+        # ===== STEP 3: Resolve entities to IDs =====
+        
         user_ids = None
-
-        # Employee list queries can be satisfied directly from extracted filters.
-        # Avoid a second LLM round-trip for name extraction on this path.
-        if requires_employee_name_filter(metric, filters):
-            user_ids, error = enforce_name_filter(query)
-
+        
+        # If employees are specified, resolve them to IDs
+        if entities.get("employees"):
+            employee_query = " ".join(entities["employees"])
+            user_ids, error = enforce_name_filter(employee_query)
             if error:
-                return {
-                    "type": "text",
-                    "message": error
-                }
-
-        """ if not names:
+                return {"type": "text", "message": error}
+        
+        # If manager is specified, resolve manager ID and set report_to_ids filter
+        if entities.get("manager"):
+            manager_ids, error = enforce_name_filter(entities["manager"])
+            if error:
+                return {"type": "text", "message": error}
+            filters["report_to_ids"] = manager_ids
+        
+        # ===== STEP 4: Build SQL using config =====
+        
+        # Determine if we should skip LIMIT for this query
+        should_skip = filters.get("should_skip_limit", False)
+        
+        sql_query = build_sql(metric, user_ids, date_range, filters)
+        print(f"[Query Handler] Generated SQL: {sql_query}")
+        
+        # ===== STEP 5: Enforce LIMIT =====
+        sql_query = enforce_limit(sql_query, skip_limit=should_skip)
+        
+        # ===== STEP 6: Validate SQL =====
+        is_valid, msg = validate_sql(sql_query, skip_limit=should_skip)
+        if not is_valid:
+            print(f"[SQL Validation] Error: {msg}")
             return {
                 "type": "text",
-                "message": "Please specify employee name."
-            } """
-
-
-        """ if user_query["name"]:
-            query += f" for employee {user_query['name']}"
-
-        if user_query["date_range"]:
-            query += f" | DATE_RANGE: {user_query['date_range']}" """
-
-
-        """ start_date, end_date = extract_date_range(query)
-
-        if start_date or end_date:
-            query += f" | DATE_FILTER: {start_date} to {end_date}"         """
-
-        # Step 1: Generate SQL
-        # sql_query = generate_sql_strict(query, SCHEMA_PROMPT)
-
-        date_range = extract_date_range(query)
-        print("Date Range : ", date_range)
-        sql_query = build_sql(metric, user_ids, date_range, filters)
-        print("GENERATED SQL : ", sql_query)
-        # Step 2: Enforce LIMIT when appropriate
-        skip_limit = should_skip_limit(metric, query, filters)
-        sql_query = enforce_limit(sql_query, skip_limit=skip_limit)
-
-        # Step 3: Validate
-        is_valid, msg = validate_sql(sql_query, skip_limit=skip_limit)
-        if not is_valid:
-            print("[SQL INVALID BEFORE EXEC]", msg)
-
-            sql_query = retry_with_error(
-                user_query["raw"],
-                sql_query,
-                msg,
-                SCHEMA_PROMPT
-            )
-
-            sql_query = enforce_limit(sql_query, skip_limit=skip_limit)
-
-            is_valid, msg = validate_sql(sql_query, skip_limit=skip_limit)
-
-            if not is_valid:
-                return {
-                    "type": "text",
-                    "message": "Unable to generate valid query. Please rephrase."
-                }
-
-        # Step 4: Execute with retry
-        result = execute_with_retry(user_query["raw"], sql_query, SCHEMA_PROMPT)
-        print("SQL Result:", result)
-        # Step 5: Normalize
+                "message": f"Unable to generate valid query: {msg}"
+            }
+        
+        # ===== STEP 7: Execute SQL =====
+        result = run_sql(sql_query)
+        
+        if result.get("error"):
+            print(f"[SQL Execution] Error: {result['error']}")
+            return {
+                "type": "text",
+                "message": f"Query execution error: {result['error']}"
+            }
+        
+        # ===== STEP 8: Format response =====
         rows = normalize_rows(result)
-        print("Normalize Rows: ", rows)
-        # Step 6: Format response
-        return build_final_response(rows, user_query["raw"])
+        print(f"[Query Handler] Got {len(rows)} rows")
+        
+        return build_final_response(rows, query)
 
     except ValueError as e:
         return {
@@ -666,10 +632,14 @@ def handle_sql_query(user_query, SCHEMA_PROMPT):
             "message": str(e)
         }
     except Exception as e:
+        import traceback
+        print(f"[Query Handler] Exception: {e}")
+        traceback.print_exc()
         return {
             "type": "text",
             "message": f"Error processing request: {str(e)}"
         }
+
 
 def enforce_limit(query: str, limit=10, skip_limit=False):
     q = query.strip().rstrip(";")

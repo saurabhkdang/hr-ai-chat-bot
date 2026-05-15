@@ -82,9 +82,11 @@ def build_sql(metric, user_ids=None, date_range=None, filters=None):
         sql += f" AND u.id IN ({ids}) "
 
     # 🔥 Date filter (fixed)
+    print("Date range:", date_range)
     if date_range:
-        start, end = date_range
-
+        start = date_range.get("start")
+        end = date_range.get("end")
+        print("Start:", start, "End:", end)
         if config.get("type") == "range":
             sql += f"""
             AND (
@@ -100,7 +102,7 @@ def build_sql(metric, user_ids=None, date_range=None, filters=None):
             sql += f" AND {alias}.{date_column} >= '{start}' "
 
     if table == "api_users_hrdb" and filters.get("attendance_status") and date_range:
-        start, end = date_range
+        # start, end = date_range
         if start and end:
             sql += f" AND att.attendance_date BETWEEN '{start}' AND '{end}' "
 
@@ -108,6 +110,12 @@ def build_sql(metric, user_ids=None, date_range=None, filters=None):
     if filters:
         print("Filters: ", filters)
         for key, value in filters.items():
+            if value is None:
+                continue
+            if isinstance(value, str) and value.strip().lower() in {"", "none"}:
+                continue
+            if key == "report_to_ids" and not value:
+                continue
 
             if key == "status" and value == "active":
                 sql += " AND u.status = 1 "

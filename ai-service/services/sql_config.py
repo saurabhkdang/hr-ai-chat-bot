@@ -27,12 +27,14 @@
 
 METRIC_CONFIG = {
     "attendance": {
+        "description": "Query attendance records and status for employees",
         "table": "hrdb_users_attendance",
         "alias": "att",
-        "column": "status",  # or present_days based on your schema
+        "column": "status",
         "date_column": "attendance_date"
     },
     "leave_balance": {
+        "description": "Query leave balance (balance or taken) for employees",
         "table": "hrdb_attendance_metrics",
         "alias": "a",
         "aggregation": "SUM",
@@ -52,6 +54,7 @@ METRIC_CONFIG = {
         "date_column": "month_year",
     },
     "employee_list": {
+        "description": "List employees with filters (active, absent, job title, team members, etc.)",
         "table": "api_users_hrdb",
         "alias": "u",
         "column": "name",
@@ -59,13 +62,15 @@ METRIC_CONFIG = {
     },
 
     "employee_info": {
+        "description": "Get employee information (DOB, email, contact, manager)",
         "table": "api_users_hrdb",
         "alias": "u",
-        "column": ["dob", "name", "email", "report_to"],  # extend later
+        "column": ["dob", "name", "email", "report_to"],
         "date_column": None
     },
 
     "manager_info": {
+        "description": "Get manager information for employees",
         "table": "api_users_hrdb",
         "alias": "u",
         "select_expressions": [
@@ -83,6 +88,7 @@ METRIC_CONFIG = {
     },
 
     "job_description": {
+        "description": "Query job descriptions and details by job title",
         "table": "api_job_description",
         "alias": "jd",
         "select_expressions": [
@@ -105,16 +111,24 @@ METRIC_CONFIG = {
     },
 
     "applied_leaves": {
-        "table": "hrdb_users_leaves",   # 👈 your table name
+        "description": "Query applied leaves with date range",
+        "table": "hrdb_users_leaves",
         "alias": "l",
         "columns": [
             "start_date",
             "end_date",
             "total_days"
         ],
-        "date_column": "start_date",  # primary filter column
-        "type": "range"               # 🔥 important (explained below)
+        "date_column": "start_date",
+        "type": "range"
     },
 
+    "employee_hierarchy": {
+        "description": "Get hierarchy/reporting chain for an employee",
+        "table": "api_users_hrdb",
+        "alias": "u",
+        "column": "name",
+        "date_column": None
+    }
     
 }
