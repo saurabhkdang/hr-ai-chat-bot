@@ -25,6 +25,12 @@
 #     "aggregation": "SUM"
 # },
 
+TABLE_INFO = {
+    "employees": "this is the table having all employees",
+    "employee_attendance_leaves_status" : "table to have all employee attendance status of all days",
+    "employees_job_details" : "table to have all data related to employee job details"
+}
+
 METRIC_CONFIG = {
     "attendance": {
         "description": "Query attendance records and status for employees",

@@ -1,4 +1,4 @@
-from services.sql_service import handle_sql_query, build_schema_prompt
+from services.sql_service import handle_sql_query, build_schema_prompt, handle_sql
 from services.vector_service import handle_vector_query
 from utils.parser import parse_query
 from config.schema import ALLOWED_SCHEMA
@@ -166,7 +166,8 @@ def handle_hybrid_query(parsed_query):
         if not sql_part or len(sql_part.strip()) < 5:
             sql_result = None
         else:
-            sql_result = handle_sql_query(parse_query(sql_clean), schema_prompt)
+            sql_result = handle_sql(parsed_query)
+            # sql_result = handle_sql_query(parse_query(sql_clean), schema_prompt)
 
         # 2. Vector processing (explanation)
         vector_query = (vector_part or parsed_query["raw"]).strip()

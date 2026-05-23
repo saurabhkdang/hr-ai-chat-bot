@@ -1,6 +1,53 @@
+import json
 import re
-from utils.llm import ask_ai
 from utils.llm_service import call_llm
+
+VALID_INTENTS = {"SQL", "VECTOR", "HYBRID"}
+
+SUPPORTED_SQL_METRICS = {
+    "attendance",
+    "leave_balance",
+    "employee_list",
+    "employee_info",
+    "manager_info",
+    "job_description",
+    "applied_leaves",
+    "employee_hierarchy"
+}
+
+
+def normalize_query(query):
+    if isinstance(query, dict):
+        raw_query = query.get("raw", "")
+        parsed_name = query.get("name")
+    else:
+        raw_query = query
+        parsed_name = None
+
+    if not isinstance(raw_query, str):
+        raw_query = str(raw_query)
+
+    return raw_query, raw_query.lower().strip(), parsed_name
+
+
+def clean_json_response(response):
+    if not response:
+        return None
+
+    cleaned = response.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.replace("```json", "").replace("```", "").strip()
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+
+    if start == -1 or end == -1:
+        return None
+
+    try:
+        return json.loads(cleaned[start:end + 1])
+    except json.JSONDecodeError:
+        return None
 
 def detect_intent_old(query):
     # 1️⃣ Rule-based (fast + strong for hybrid)
@@ -44,24 +91,168 @@ def detect_intent_for_part(part):
     print(f"Intent for part '{part}'")
     intent = detect_intent(part)
     if intent == "HYBRID":
-        if any(k in part for k in ["policy", "rule", "guidelines"]):
+        part_text = part.get("raw", "") if isinstance(part, dict) else str(part)
+        part_text = part_text.lower()
+        if any(k in part_text for k in ["policy", "rule", "guidelines"]):
             return "VECTOR"
         return "SQL"
     
     return intent
 
 def detect_intent(query):
+    raw_query, q, parsed_name = normalize_query(query)
+
+    print("Detecting intent for query:", q)
+
+    quick_intent = detect_intent_quick_rules(q, parsed_name)
+    if quick_intent:
+        print("Intent source: quick rules")
+        return quick_intent
+
+    llm_intent = detect_intent_structured_llm(raw_query)
+    if llm_intent:
+        print("Intent source: structured llm")
+        return llm_intent
+
+    print("Intent source: keyword score fallback")
+    return detect_intent_keyword_score(query)
+
+
+def detect_intent_quick_rules(q, parsed_name=None):
+    if not q:
+        return "VECTOR"
+
+    normalized_q = q.replace("prcoess", "process")
+
+    sql_terms = [
+        "balance", "attendance", "salary", "dob", "date of birth",
+        "email", "phone", "manager of", "reporting manager", "reports to",
+        "report to", "job description", "job title", "designation",
+        "team members", "direct reports", "hierarchy"
+    ]
+    vector_terms = [
+        "policy", "rules", "guidelines", "process", "procedure",
+        "approval", "approve", "how to", "why", "explain", "define", "meaning",
+        "work from home", "wfh"
+    ]
+    data_question_terms = [
+        "who", "which employee", "which employees", "how many",
+        "list", "show", "get", "fetch"
+    ]
+    leave_status_terms = [
+        "on leave", "due to leave", "because of leave", "not working",
+        "not been working", "not worked", "absent", "present", "weekly off"
+    ]
+
+    has_sql = any(term in normalized_q for term in sql_terms) or parsed_name
+    has_vector = any(term in normalized_q for term in vector_terms)
+    has_data_question = any(term in normalized_q for term in data_question_terms)
+    has_leave_status = any(term in normalized_q for term in leave_status_terms)
+
+    if check_hybrid_query(normalized_q) and has_sql and has_vector:
+        return "HYBRID"
+
+    if has_leave_status and (has_data_question or "employee" in q or "leave" in q):
+        return "SQL"
+
+    if has_sql and not has_vector:
+        return "SQL"
+
+    if has_vector and not has_sql:
+        return "VECTOR"
+
+    if has_sql and has_vector:
+        data_action_terms = [
+            "show", "list", "get", "fetch", "how many", "count",
+            "balance", "report", "status"
+        ]
+        if not any(term in q for term in data_action_terms):
+            return "VECTOR"
+
+    if q in {"leave", "details", "leave details"}:
+        return "VECTOR"
+
+    return None
+
+
+def detect_intent_structured_llm(raw_query):
+    prompt = f"""
+    You are an intent router for an HR assistant.
+
+    Classify the user's query into exactly one intent:
+    - SQL: user asks for employee/database facts, records, lists, counts, attendance, leave status, salary, DOB, manager, hierarchy, job description, or filters over employees.
+    - VECTOR: user asks for policy, rules, process, explanation, meaning, guidelines, or general HR knowledge.
+    - HYBRID: user asks for both database facts and policy/explanation in the same query.
+
+    Supported SQL metrics:
+    {", ".join(sorted(SUPPORTED_SQL_METRICS))}
+
+    Return ONLY valid JSON:
+    {{
+        "intent": "SQL|VECTOR|HYBRID",
+        "confidence": 0.0,
+        "sql_metric": "one supported SQL metric or null",
+        "vector_topic": "short topic or null",
+        "reason": "short reason"
+    }}
+
+    Rules:
+    - Use SQL for prompts like "who is on leave today", "who has not been working this week due to leave", or "which employees were absent".
+    - Use VECTOR for prompts like "how to apply leave", "leave policy", or "what is sick leave".
+    - Use HYBRID when one query asks for both data and policy/rules/process.
+    - If unsure, choose VECTOR with low confidence.
+
+    User query:
+    {raw_query}
+    """
+
+    try:
+        response = call_llm(prompt)
+    except Exception as e:
+        print(f"Structured intent LLM failed: {e}")
+        return None
+
+    data = clean_json_response(response)
+    return validate_structured_intent(data)
+
+
+def validate_structured_intent(data):
+    if not isinstance(data, dict):
+        return None
+
+    intent = str(data.get("intent", "")).strip().upper()
+    if intent not in VALID_INTENTS:
+        return None
+
+    try:
+        confidence = float(data.get("confidence", 0))
+    except (TypeError, ValueError):
+        confidence = 0
+
+    if confidence < 0.55:
+        return None
+
+    metric = data.get("sql_metric")
+    if intent in {"SQL", "HYBRID"} and metric and metric not in SUPPORTED_SQL_METRICS:
+        return None
+
+    return intent
+
+
+def detect_intent_keyword_score(query):
     
     # ✅ Normalize input
     if isinstance(query, dict):
-        q = query.get("raw", "")
+        raw_query = query.get("raw", "")
+        parsed_name = query.get("name")
     else:
-        q = query
+        raw_query = query
+        parsed_name = None
 
-    if not isinstance(q, str):
-        q = str(q)
-
-    q = q.lower()
+    if not isinstance(raw_query, str):
+        raw_query = str(raw_query)
+    
+    q = raw_query.lower().strip()
 
     print("Detecting intent for query:", q)
     policy_keywords = [
@@ -86,11 +277,14 @@ def detect_intent(query):
         "dob", "date of birth",
         "email", "phone",
         "address", "manager", "reporting manager", "reports to", "report to",
-        "joining date", "doj", "leaves taken"
+        "joining date", "doj", "leaves taken",
+        "job description", "job title", "designation", "job role",
+        "team member", "team members", "direct report", "direct reports",
+        "hierarchy"
     ]
 
     medium_sql = [
-        "list", "show", "get", "fetch"
+        "list", "show", "get", "fetch", "how many", "number of"
     ]
 
     weak_sql = [
@@ -117,7 +311,7 @@ def detect_intent(query):
             sql_score += 3
     
     for word in STRONG_SQL_SIGNALS:
-        if word in query:
+        if word in q:
             sql_score += 2  # 🔥 boost
 
     for word in medium_sql:
@@ -137,7 +331,7 @@ def detect_intent(query):
             vector_score += 2
 
     # ---------------- NAME BOOST ----------------
-    if query.get("name"):
+    if parsed_name:
         sql_score += 2   # strong signal for SQL
 
     if any(word in q for word in ["get", "list", "show"]) and "employee" in q:
@@ -145,8 +339,40 @@ def detect_intent(query):
 
     if any(phrase in q for phrase in ["manager of", "reporting manager", "reports to", "report to"]):
         sql_score += 3
-    
-    # 🔥 Boost vector for definition queries
+
+    # Attendance/leave status queries often do not say "attendance" directly.
+    data_question_terms = [
+        "who", "which employee", "which employees", "which team member",
+        "which team members", "whose"
+    ]
+    leave_status_terms = [
+        "not working", "not been working", "not worked",
+        "on leave", "due to leave", "because of leave",
+        "absent", "absence", "present", "weekly off"
+    ]
+    date_terms = [
+        "today", "yesterday", "this week", "last week",
+        "this month", "last month", "this year", "last year"
+    ]
+    leave_type_terms = [
+        "privilege leave", "sick leave", "casual leave",
+        "pl", "sl", "cl"
+    ]
+
+    has_data_question = any(term in q for term in data_question_terms)
+    has_leave_status = any(term in q for term in leave_status_terms)
+    has_date_context = any(term in q for term in date_terms)
+    has_leave_type = any(term in q for term in leave_type_terms)
+
+    if has_leave_status:
+        sql_score += 3
+
+    if has_data_question and ("leave" in q or has_leave_status or has_leave_type):
+        sql_score += 4
+
+    if "leave" in q and has_date_context and (has_data_question or has_leave_status or has_leave_type):
+        sql_score += 3
+
     if is_definition_query(q):
         vector_score += 2
 
@@ -250,6 +476,7 @@ def detect_intent_pattern(query):
     return None
 
 def detect_intent_llm(query):
+    raw_query = query.get("raw", "") if isinstance(query, dict) else str(query)
     prompt = f"""
     You are an intent classifier for an HR assistant.
 
@@ -273,7 +500,7 @@ def detect_intent_llm(query):
     SQL or VECTOR or HYBRID
 
     Query:
-    {query["raw"]}
+    {raw_query}
     """
 
     res = call_llm(prompt)

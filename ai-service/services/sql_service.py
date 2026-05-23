@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import re
 from utils.llm_service import call_llm
 from utils.entity_extractor import extract_employee_names
-from services.sql_builder import build_sql
+from services.sql_builder import build_sql, build_sql_updated
 from services.intent_parser import parse_query_intelligent, normalize_intent_data
 import json
 
@@ -22,6 +22,47 @@ from datetime import datetime, timedelta
 import re
 from datetime import datetime, timedelta
 import calendar
+
+def handle_sql(user_query):
+    try:
+        if not user_query["raw"].strip():
+            return {
+                "type": "text",
+                "message": "Please enter a query"
+            }
+
+        query = user_query["raw"]
+        print("query : ", query)
+        sql_query = build_sql_updated(query)
+        print("sql query : ", sql_query)
+        result = run_sql(sql_query)
+        
+        if result.get("error"):
+            print(f"[SQL Execution] Error: {result['error']}")
+            return {
+                "type": "text",
+                "message": f"Query execution error: {result['error']}"
+            }
+        
+        # ===== STEP 8: Format response =====
+        rows = normalize_rows(result)
+        print(f"[Query Handler] Got {len(rows)} rows")
+        
+        return build_final_response(rows, query)
+
+    except ValueError as e:
+        return {
+            "type": "text",
+            "message": str(e)
+        }
+    except Exception as e:
+        import traceback
+        print(f"[Query Handler] Exception: {e}")
+        traceback.print_exc()
+        return {
+            "type": "text",
+            "message": f"Error processing request: {str(e)}"
+        }
 
 def extract_date_range(query: str):
     query = query.lower()

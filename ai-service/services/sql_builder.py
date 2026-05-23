@@ -1,4 +1,87 @@
-from services.sql_config import METRIC_CONFIG
+from services.sql_config import METRIC_CONFIG, TABLE_INFO
+from utils.llm_call import call
+from sql_tool import get_table_info
+
+def detect_tables(question):
+    prompt = f"""
+You are a database assistant.
+
+Available tables:
+{TABLE_INFO}
+
+Tasks:
+1. Understand the user question even if spelling mistakes exist
+2. Correct spelling mentally before reasoning
+3. Identify relevant tables
+
+Return JSON only in below format:
+
+{{
+    "normalized_question": "corrected question here",
+    "tables": ["table1","table2"]
+}}
+
+Rules:
+- No explanation
+- JSON only
+- Do not wrap JSON inside markdown
+- Table names must come only from available tables list
+
+Question:
+{question}
+"""
+
+    content = call(prompt, "json")
+
+    return content
+
+def get_sql_query(schema, question):
+    prompt = f"""
+Based on the table schema below, write a SQL query that answers the user's question.
+
+Business Semantics:
+- Use attendance_category for leave/work/holiday related filtering
+- attendance_category values:
+    - LEAVE
+    - WORK
+    - HOLIDAY
+
+Important Query Rules:
+- For employee name searches, use LIKE instead of exact match
+- Use partial matching for names
+- Example:
+    employee_name LIKE '%Rahul%'    
+
+Rules:
+- Return ONLY SQL query
+- No explanation
+- Single line only
+- No markdown
+
+Schema:
+{schema}
+
+Question:
+{question}
+
+SQL Query:
+"""
+    sql_query = call(prompt, "string")
+    return sql_query
+
+def build_sql_updated(question):
+
+    result = detect_tables(question)
+
+    normalized_question = result["normalized_question"]
+
+    table_list = result["tables"]
+
+    schema = get_table_info(table_list)
+
+    sql = get_sql_query(schema, question)
+
+    return sql.strip()
 
 def build_sql(metric, user_ids=None, date_range=None, filters=None):
     config = METRIC_CONFIG.get(metric)
