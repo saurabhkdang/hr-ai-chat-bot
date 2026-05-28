@@ -1,4 +1,4 @@
-# def validate_sql(query: str) -> (bool, str):
+# def validate_sql_old(query: str) -> (bool, str):
 
 # def normalize_rows(result):
 

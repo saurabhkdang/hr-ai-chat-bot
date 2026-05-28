@@ -104,10 +104,10 @@ def detect_intent(query):
 
     print("Detecting intent for query:", q)
 
-    quick_intent = detect_intent_quick_rules(q, parsed_name)
-    if quick_intent:
-        print("Intent source: quick rules")
-        return quick_intent
+    # quick_intent = detect_intent_quick_rules(q, parsed_name)
+    # if quick_intent:
+    #     print("Intent source: quick rules")
+    #     return quick_intent
 
     llm_intent = detect_intent_structured_llm(raw_query)
     if llm_intent:

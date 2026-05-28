@@ -1,7 +1,7 @@
 from sql_agent import enforce_name_filter, generate_sql_strict
 from sql_tool import run_sql
 from config.schema import ALLOWED_SCHEMA
-from services.sql_service import build_schema_prompt,enforce_limit,retry_with_error,validate_sql
+from services.sql_service import build_schema_prompt,enforce_limit,retry_with_error,validate_sql_old
 
 def is_comparison_query(query):
     q = query.lower()
@@ -96,7 +96,7 @@ def handle_comparison_query(query):
     sql_query = enforce_limit(sql_query)
 
     # Step 32: Validate
-    is_valid, msg = validate_sql(sql_query)
+    is_valid, msg = validate_sql_old(sql_query)
     if not is_valid:
         print("[SQL INVALID BEFORE EXEC]", msg)
 
@@ -109,7 +109,7 @@ def handle_comparison_query(query):
 
         sql_query = enforce_limit(sql_query)
 
-        is_valid, msg = validate_sql(sql_query)
+        is_valid, msg = validate_sql_old(sql_query)
 
         if not is_valid:
             return {

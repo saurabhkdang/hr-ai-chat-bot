@@ -16,6 +16,28 @@ BLOCKED_KEYWORDS = [
     "TRUNCATE", "EXEC", "UNION"
 ]
 
+ALLOWED_SQL_VIEWS = [
+    "employee_attendance_leaves_status",
+    "employees",
+    "employees_job_details",
+]
+
+
+BLOCKED_SQL_KEYWORDS = [
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "DROP",
+    "ALTER",
+    "TRUNCATE",
+    "CREATE",
+    "REPLACE",
+    "EXEC",
+    "MERGE",
+    "GRANT",
+    "REVOKE",
+]
+
 import re
 from datetime import datetime, timedelta
 
@@ -23,7 +45,26 @@ import re
 from datetime import datetime, timedelta
 import calendar
 
-def handle_sql(user_query):
+def is_destructive_prompt(query: str) -> bool:
+    q = query.lower()
+
+    destructive_words = [
+        "delete",
+        "remove",
+        "drop",
+        "truncate",
+        "erase",
+        "clear",
+        "update",
+        "modify",
+        "change",
+        "insert",
+        "create"
+    ]
+
+    return any(word in q.split() for word in destructive_words)
+
+def handle_sql(user_query, allow_empty=False):
     try:
         if not user_query["raw"].strip():
             return {
@@ -32,9 +73,33 @@ def handle_sql(user_query):
             }
 
         query = user_query["raw"]
+
+        if is_destructive_prompt(query):
+            return {
+                "type": "text",
+                "message": "I can only answer HR data questions using read-only SELECT queries. I cannot delete, update, or modify employee data."
+            }
+
         print("query : ", query)
-        sql_query = build_sql_updated(query)
+        sql_data = build_sql_updated(query)
+        sql_query = sql_data["sql"]
+        selected_tables = sql_data["tables"]
+
+        print("Selected tables/views:", selected_tables)
         print("sql query : ", sql_query)
+
+        is_valid, validation_message = validate_sql(
+            sql_query,
+            allowed_views=selected_tables
+        )
+
+        if not is_valid:
+            return {
+                "type": "text",
+                "message": f"Generated SQL blocked: {validation_message}",
+                "debug_sql": sql_query
+            }
+
         result = run_sql(sql_query)
         
         if result.get("error"):
@@ -47,6 +112,20 @@ def handle_sql(user_query):
         # ===== STEP 8: Format response =====
         rows = normalize_rows(result)
         print(f"[Query Handler] Got {len(rows)} rows")
+
+        if not rows:
+            if allow_empty:
+                return {
+                    "type": "table",
+                    "data": [],
+                    "summary": "No matching SQL records found.",
+                    "sql": sql_query
+                }
+            return {
+                "type": "text",
+                "message": "I found no matching records for this query. The SQL was valid, but the filters may be too strict.",
+                "debug_sql": sql_query
+            }
         
         return build_final_response(rows, query)
 
@@ -643,7 +722,7 @@ def handle_sql_query(user_query, SCHEMA_PROMPT):
         sql_query = enforce_limit(sql_query, skip_limit=should_skip)
         
         # ===== STEP 6: Validate SQL =====
-        is_valid, msg = validate_sql(sql_query, skip_limit=should_skip)
+        is_valid, msg = validate_sql_old(sql_query, skip_limit=should_skip)
         if not is_valid:
             print(f"[SQL Validation] Error: {msg}")
             return {
@@ -705,8 +784,60 @@ def should_skip_limit(metric: str, query: str, filters: dict):
 
     return False
 
+def validate_sql(sql_query: str, allowed_views=None):
+    if not sql_query or not isinstance(sql_query, str):
+        return False, "Empty SQL query"
 
-def validate_sql(query: str, skip_limit=False) -> tuple[bool, str]:
+    allowed_views = allowed_views or ALLOWED_SQL_VIEWS
+
+    query = sql_query.strip()
+    query_upper = query.upper()
+
+    # 1. Only SELECT allowed
+    if not query_upper.startswith("SELECT"):
+        return False, "Only SELECT queries are allowed"
+
+    # 2. Prevent multiple SQL statements
+    if ";" in query[:-1]:
+        return False, "Multiple SQL statements are not allowed"
+
+    # 3. Block dangerous SQL keywords
+    for keyword in BLOCKED_SQL_KEYWORDS:
+        if re.search(rf"\b{keyword}\b", query_upper):
+            return False, f"Blocked SQL keyword found: {keyword}"
+
+    # 4. Block SELECT *
+    if re.search(r"\bSELECT\s+\*", query_upper):
+        return False, "SELECT * is not allowed"
+
+    # 5. Must use at least one allowed view
+    query_lower = query.lower()
+    used_views = [
+        view for view in allowed_views
+        if re.search(rf"\b{re.escape(view.lower())}\b", query_lower)
+    ]
+
+    if not used_views:
+        return False, "SQL does not use any allowed view"
+
+    # 6. Block unknown table/view usage after FROM or JOIN
+    referenced_tables = re.findall(
+        r"\b(?:FROM|JOIN)\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+        query,
+        flags=re.IGNORECASE
+    )
+
+    for table in referenced_tables:
+        if table not in allowed_views:
+            return False, f"Unauthorized table/view used: {table}"
+
+    # 7. Block UNION for now
+    if re.search(r"\bUNION\b", query_upper):
+        return False, "UNION queries are not allowed"
+
+    return True, "SQL is valid"
+
+def validate_sql_old(query: str, skip_limit=False) -> tuple[bool, str]:
     q = query.upper().strip()
 
     # must start with SELECT

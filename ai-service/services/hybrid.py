@@ -7,6 +7,49 @@ from utils.llm_service import call_llm
 from utils.intent_service import detect_intent_for_part
 import re
 
+def looks_like_hybrid_query(query: str) -> bool:
+    q = query.lower()
+
+    sql_signals = [
+        "show",
+        "get",
+        "list",
+        "attendance",
+        "leave balance",
+        "leaves taken",
+        "employee",
+        "employees",
+        "today",
+        "yesterday",
+        "last",
+        "this month"
+    ]
+
+    vector_signals = [
+        "policy",
+        "rule",
+        "rules",
+        "process",
+        "procedure",
+        "guideline",
+        "what happens",
+        "what is the rule",
+        "explain",
+        "allowed",
+        "not allowed",
+        "eligibility",
+        "repeated",
+        "late attendance"
+    ]
+
+    has_sql = any(signal in q for signal in sql_signals)
+    has_vector = any(signal in q for signal in vector_signals)
+
+    connector_words = [" and ", " also ", " along with ", " plus "]
+    has_connector = any(word in q for word in connector_words)
+
+    return has_sql and has_vector and has_connector
+
 def is_hybrid_query(parsed_query):
     query = parsed_query["raw"].lower()
 
@@ -156,7 +199,9 @@ def handle_hybrid_query(parsed_query):
     try:
 
         sql_part, vector_part = split_hybrid_query(parsed_query["raw"])
-        print("SPLIT PARTS:", sql_part, vector_part)
+        print("SPLIT PARTS:")
+        print("SQL : ", sql_part)
+        print("Vector : ", vector_part)
         # ✅ Clean SQL input
         sql_clean = clean_sql_query(sql_part)
 
@@ -166,7 +211,7 @@ def handle_hybrid_query(parsed_query):
         if not sql_part or len(sql_part.strip()) < 5:
             sql_result = None
         else:
-            sql_result = handle_sql(parsed_query)
+            sql_result = handle_sql(parsed_query, allow_empty=True)
             # sql_result = handle_sql_query(parse_query(sql_clean), schema_prompt)
 
         # 2. Vector processing (explanation)

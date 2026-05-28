@@ -33,7 +33,44 @@ Question:
 
     content = call(prompt, "json")
 
-    return content
+    if not content:
+        raise ValueError("Unable to detect relevant SQL view.")
+
+    if isinstance(content, str):
+        import json
+
+        cleaned = content.strip()
+
+        if cleaned.startswith("```"):
+            cleaned = cleaned.replace("```json", "").replace("```", "").strip()
+
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+
+        if start != -1 and end != -1:
+            cleaned = cleaned[start:end + 1]
+
+        content = json.loads(cleaned)
+
+    tables = content.get("tables", [])
+
+    if not tables:
+        raise ValueError("No relevant SQL view detected.")
+
+    allowed_tables = set(TABLE_INFO.keys())
+
+    valid_tables = [
+        table for table in tables
+        if table in allowed_tables
+    ]
+
+    if not valid_tables:
+        raise ValueError("Detected SQL view is not allowed.")
+
+    return {
+        "normalized_question": content.get("normalized_question", question),
+        "tables": valid_tables
+    }
 
 def get_sql_query(schema, question):
     prompt = f"""
@@ -51,6 +88,24 @@ Important Query Rules:
 - Use partial matching for names
 - Example:
     employee_name LIKE '%Rahul%'    
+
+STRICT SQL RULES:
+- Return ONLY SQL query
+- No explanation
+- Single line only
+- No markdown
+- Use SELECT only
+- NEVER use SELECT *
+- Always explicitly list required columns
+- Use only columns present in the schema
+- Use only the provided table/view schema
+- Add LIMIT 100 unless the query uses COUNT, SUM, AVG, MIN, or MAX
+- If user asks attendance, include employee name, attendance date/status/category columns if available
+- If user asks employee list, include employee name and relevant requested columns only
+
+Important View Behavior:
+- Some views may contain multiple rows per employee because of related records like tasks, leave entries, attendance entries, or designation mappings.
+- When user asks for employee lists, employee names, managers, or people, avoid duplicate employee rows.
 
 Rules:
 - Return ONLY SQL query
@@ -81,7 +136,13 @@ def build_sql_updated(question):
 
     sql = get_sql_query(schema, question)
 
-    return sql.strip()
+    resp = {
+        "sql": sql.strip(),
+        "tables": table_list,
+        "normalized_question": normalized_question
+    }
+
+    return resp
 
 def build_sql(metric, user_ids=None, date_range=None, filters=None):
     config = METRIC_CONFIG.get(metric)

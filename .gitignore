@@ -19,3 +19,5 @@ ai-service/config/__pycache__/*.*
 /ai-service/services/__pycache__
 /ai-service/__pycache__
 /ai-service/utils/__pycache__
+*.zip
+/ai-service/frontend/node_modules
