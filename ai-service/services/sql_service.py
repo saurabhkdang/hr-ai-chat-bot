@@ -92,7 +92,7 @@ def handle_sql(user_query, allow_empty=False):
             sql_query,
             allowed_views=selected_tables
         )
-
+        print("Validation Message : ", validation_message)
         if not is_valid:
             return {
                 "type": "text",
@@ -784,6 +784,38 @@ def should_skip_limit(metric: str, query: str, filters: dict):
 
     return False
 
+def strip_sql_string_literals(query: str) -> str:
+    stripped = []
+    in_string = False
+    i = 0
+
+    while i < len(query):
+        char = query[i]
+
+        if in_string:
+            if char == "'" and i + 1 < len(query) and query[i + 1] == "'":
+                stripped.extend("  ")
+                i += 2
+                continue
+
+            if char == "'":
+                in_string = False
+
+            stripped.append(" ")
+            i += 1
+            continue
+
+        if char == "'":
+            in_string = True
+            stripped.append(" ")
+            i += 1
+            continue
+
+        stripped.append(char)
+        i += 1
+
+    return "".join(stripped)
+
 def validate_sql(sql_query: str, allowed_views=None):
     if not sql_query or not isinstance(sql_query, str):
         return False, "Empty SQL query"
@@ -791,14 +823,15 @@ def validate_sql(sql_query: str, allowed_views=None):
     allowed_views = allowed_views or ALLOWED_SQL_VIEWS
 
     query = sql_query.strip()
-    query_upper = query.upper()
+    query_without_literals = strip_sql_string_literals(query)
+    query_upper = query_without_literals.upper()
 
     # 1. Only SELECT allowed
-    if not query_upper.startswith("SELECT"):
+    if not query.strip().upper().startswith("SELECT"):
         return False, "Only SELECT queries are allowed"
 
     # 2. Prevent multiple SQL statements
-    if ";" in query[:-1]:
+    if ";" in query_without_literals[:-1]:
         return False, "Multiple SQL statements are not allowed"
 
     # 3. Block dangerous SQL keywords
@@ -811,7 +844,7 @@ def validate_sql(sql_query: str, allowed_views=None):
         return False, "SELECT * is not allowed"
 
     # 5. Must use at least one allowed view
-    query_lower = query.lower()
+    query_lower = query_without_literals.lower()
     used_views = [
         view for view in allowed_views
         if re.search(rf"\b{re.escape(view.lower())}\b", query_lower)
@@ -823,7 +856,7 @@ def validate_sql(sql_query: str, allowed_views=None):
     # 6. Block unknown table/view usage after FROM or JOIN
     referenced_tables = re.findall(
         r"\b(?:FROM|JOIN)\s+([a-zA-Z_][a-zA-Z0-9_]*)",
-        query,
+        query_without_literals,
         flags=re.IGNORECASE
     )
 

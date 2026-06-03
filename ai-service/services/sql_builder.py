@@ -86,6 +86,8 @@ Business Semantics:
 Important Query Rules:
 - For employee name searches, use LIKE instead of exact match
 - Use partial matching for names
+- Use aliases if multiple tables joined and have similar column names to avoid ambiguity
+- Some views may contain multiple rows per employee because of related records like tasks, leave entries, attendance entries, or designation mappings.
 - Example:
     employee_name LIKE '%Rahul%'    
 
@@ -96,6 +98,7 @@ STRICT SQL RULES:
 - No markdown
 - Use SELECT only
 - NEVER use SELECT *
+- Use aliases for tables if multiple tables are used to avoid ambiguity
 - Always explicitly list required columns
 - Use only columns present in the schema
 - Use only the provided table/view schema
