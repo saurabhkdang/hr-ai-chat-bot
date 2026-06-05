@@ -21,7 +21,8 @@ def get_db_connection():
         password=password,
         database=database_schema,
         port=port,
-        cursorclass=pymysql.cursors.DictCursor
+        cursorclass=pymysql.cursors.DictCursor,
+        ssl_disabled=True
     )
 
     return connection
