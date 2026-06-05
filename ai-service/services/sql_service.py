@@ -1,6 +1,6 @@
 from sql_agent import generate_sql_strict, enforce_name_filter
 from sql_tool import run_sql
-from utils.llm import ask_ai
+# from utils.llm import ask_ai
 from utils.formatter import format_response
 from datetime import datetime, timedelta
 import re

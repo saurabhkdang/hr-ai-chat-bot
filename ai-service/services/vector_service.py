@@ -1,5 +1,5 @@
 from vector_search import search_docs
-from utils.llm import ask_ai
+# from utils.llm import ask_ai
 from utils.llm_service import call_llm
 import re
 

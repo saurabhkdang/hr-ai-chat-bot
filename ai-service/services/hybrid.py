@@ -2,7 +2,7 @@ from services.sql_service import handle_sql_query, build_schema_prompt, handle_s
 from services.vector_service import handle_vector_query
 from utils.parser import parse_query
 from config.schema import ALLOWED_SCHEMA
-from utils.llm import ask_ai
+# from utils.llm import ask_ai
 from utils.llm_service import call_llm
 from utils.intent_service import detect_intent_for_part
 import re
