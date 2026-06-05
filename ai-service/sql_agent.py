@@ -1,7 +1,7 @@
 import requests
 from config.schema import OLLAMA_URL, MODEL_NAME
 from schema import get_schema
-from utils.llm import ask_ai
+# from utils.llm import ask_ai
 from utils.llm_service import call_llm
 from utils.entity_extractor import extract_employee_names
 from config.schema import get_db_config
